@@ -12,9 +12,12 @@
 // #include "esp_log.h"
 
 #include "nemo_tnc.h"
+#include "indicator.h"
 
 void tnc_init(void)
 {
+    indicator_init(); // インジケータ初期化
     usb_init(); // USB 初期化処理の呼び出し
+
 }
 

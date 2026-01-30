@@ -18,10 +18,9 @@
 #include "tinyusb_default_config.h"
 #include "tinyusb_cdc_acm.h"
 #include "sdkconfig.h"
-#include "tusb_cdc_acm.h"
 #include "tusb.h"
 #include "nemo_tnc.h"
-
+#include "indicator.h"
 
 // --- USB インターフェース番号の定義 ---
 enum {
@@ -66,6 +65,10 @@ static void command_port_rx_callback(int itf, cdcacm_event_t *event) {
         tinyusb_cdcacm_write_queue(itf, buf, rx_size);
         tinyusb_cdcacm_write_flush(itf, 0);
         ESP_LOGI(TAG, "Port 0 (Command) received: %.*s", rx_size, buf);
+//       indicator_status_error(); // エコーバック時にエラー表示 (テスト目的)
+//        if (buf[0] == '\n') {
+//            indicator_status_off(); // 改行でUSB接続状態表示に戻す
+//        }
     }
 }
 
@@ -77,6 +80,7 @@ static void data_port_rx_callback(int itf, cdcacm_event_t *event) {
     if (ret == ESP_OK && rx_size > 0) {
         // ここにKISSパケット処理を記述
         ESP_LOGI(TAG, "Port 1 (Data) received %d bytes", rx_size);
+//        indicator_status_data_rx();
     }
 }
 
@@ -116,7 +120,7 @@ void usb_init(void)
         .callback_line_state_changed = NULL,
         .callback_line_coding_changed = NULL
     };
-    ESP_ERROR_CHECK(tusb_cdc_acm_init(&acm_cfg_0));
+    ESP_ERROR_CHECK(tinyusb_cdcacm_init(&acm_cfg_0));
 
     // 3. CDC ポート 1 (Data/KISS) の設定
     tinyusb_config_cdcacm_t acm_cfg_1 = {
@@ -126,7 +130,7 @@ void usb_init(void)
         .callback_line_state_changed = NULL,
         .callback_line_coding_changed = NULL
     };
-    ESP_ERROR_CHECK(tusb_cdc_acm_init(&acm_cfg_1));
+    ESP_ERROR_CHECK(tinyusb_cdcacm_init(&acm_cfg_1));
 
     ESP_LOGI(TAG, "USB Dual CDC installation complete.");
 

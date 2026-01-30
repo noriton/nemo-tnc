@@ -13,5 +13,6 @@ void indicator_set_color(uint8_t r, uint8_t g, uint8_t b);
 void indicator_status_usb_conn(void);   // 例：青
 void indicator_status_data_rx(void);    // 例：緑
 void indicator_status_error(void);      // 例：赤
+void indicator_status_off(void);        // 消灯
 
 #endif

@@ -21,19 +21,23 @@
 #define TAGNAME "NEMO_TNC"
 
 #include "nemo_tnc.h"
+#include "indicator.h"
+
 
 // --- メイン関数 ---
 
 void app_main(void)
 {
     ESP_LOGI(TAG, "FX.25 TNC with Command mode by JH1FBM");
-    tnc_init();  // TNC 初期化処理
-    
-    ESP_LOGI(TAG, "Starting NEMO-TNC ...");
 
-    // メインループ
+    tnc_init();  // TNC 初期化処理
+    ESP_LOGI(TAG, "TNC initialized. System running.");
+    indicator_set_color(0, 0, 0); 
+
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+
 }
+
 
