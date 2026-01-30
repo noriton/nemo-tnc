@@ -26,9 +26,10 @@
 
 void app_main(void)
 {
+    ESP_LOGI(TAG, "FX.25 TNC with Command mode by JH1FBM");
     tnc_init();  // TNC 初期化処理
     
-    ESP_LOGI(TAG, "Starting NEMO-TNC (ESP32S3) by JH1FBM ...");
+    ESP_LOGI(TAG, "Starting NEMO-TNC ...");
 
     // メインループ
     while (1) {
