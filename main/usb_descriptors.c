@@ -65,11 +65,8 @@ static void command_port_rx_callback(int itf, cdcacm_event_t *event) {
         tinyusb_cdcacm_write_queue(itf, buf, rx_size);
         tinyusb_cdcacm_write_flush(itf, 0);
         ESP_LOGI(TAG, "Port 0 (Command) received: %.*s", rx_size, buf);
-//       indicator_status_error(); // エコーバック時にエラー表示 (テスト目的)
-//        if (buf[0] == '\n') {
-//            indicator_status_off(); // 改行でUSB接続状態表示に戻す
-//        }
-    }
+        indicator_status_off(); // データ受信表示(仮オフ)
+     }
 }
 
 // ポート1: KISSデータ用
@@ -80,7 +77,7 @@ static void data_port_rx_callback(int itf, cdcacm_event_t *event) {
     if (ret == ESP_OK && rx_size > 0) {
         // ここにKISSパケット処理を記述
         ESP_LOGI(TAG, "Port 1 (Data) received %d bytes", rx_size);
-//        indicator_status_data_rx();
+        indicator_status_data_rx(); // USB接続済み表示(仮: 点滅)
     }
 }
 

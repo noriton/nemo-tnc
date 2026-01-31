@@ -32,7 +32,8 @@ void app_main(void)
 
     tnc_init();  // TNC 初期化処理
     ESP_LOGI(TAG, "TNC initialized. System running.");
-    indicator_set_color(0, 0, 0); 
+    vTaskDelay(pdMS_TO_TICKS(3000));  // 起動表示を3秒間維持
+    indicator_set_state(TNC_ST_IDLE); // USB接続済み待機状態に設定
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
