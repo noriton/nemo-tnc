@@ -13,13 +13,17 @@
 
 #include "nemo_tnc.h"
 #include "indicator.h"
+#include "tnc_buffer.h"
 
 void tnc_init(void)
 {
     indicator_init(); // インジケータ初期化
     // 起動中表示(高速点滅) さすがにインジケータ初期化を先にやらざるを得ない
     indicator_set_state(TNC_ST_BOOT); // 起動中状態に設定
+    
+    tnc_buffer_init(); // TNC用バッファ初期化
     usb_init(); // USB 初期化処理の呼び出し
+
 
 }
 

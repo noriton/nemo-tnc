@@ -3,4 +3,5 @@ idf_component_register(SRCS
     "usb_descriptors.c" 
     "tnc_init.c"
     "indicator.c"
+    "tnc_buffer.c"
 INCLUDE_DIRS .)

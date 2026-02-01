@@ -22,6 +22,8 @@
 
 #include "nemo_tnc.h"
 #include "indicator.h"
+#include "tnc_buffer.h"
+
 
 
 // --- メイン関数 ---

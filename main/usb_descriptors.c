@@ -18,9 +18,11 @@
 #include "tinyusb_default_config.h"
 #include "tinyusb_cdc_acm.h"
 #include "sdkconfig.h"
+
 #include "tusb.h"
 #include "nemo_tnc.h"
 #include "indicator.h"
+#include "tnc_buffer.h"
 
 // --- USB インターフェース番号の定義 ---
 enum {
@@ -57,6 +59,26 @@ static const char* const_string_desc[] = {
 
 // ポート0: コマンド入力用 (エコーバック実装)
 static void command_port_rx_callback(int itf, cdcacm_event_t *event) {
+uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE];
+    size_t rx_size = 0;
+
+    // 1. TinyUSBの内部バッファからデータを取り出す
+    esp_err_t ret = tinyusb_cdcacm_read(itf, buf, sizeof(buf), &rx_size);
+    
+    if (ret == ESP_OK && rx_size > 0) {
+        // 2. LEDを「受信中」ステートに（昨日作ったやつですね！）
+        indicator_set_state(TNC_ST_RX);
+
+        // 3. リングバッファにデータを送る
+        // 第4引数は待ち時間（ms）。コールバック内なので待機せず「0」
+        BaseType_t res = xRingbufferSend(usb_rx_ringbuf, buf, rx_size, 0);
+        
+        if (res != pdTRUE) {
+            // バッファがいっぱいなら警告
+            ESP_LOGW("USB_RX", "Ringbuffer full, data dropped!");
+        }
+    }
+    /*
     size_t rx_size = 0;
     uint8_t buf[64];
     esp_err_t ret = tinyusb_cdcacm_read(itf, buf, sizeof(buf), &rx_size);
@@ -67,6 +89,7 @@ static void command_port_rx_callback(int itf, cdcacm_event_t *event) {
         ESP_LOGI(TAG, "Port 0 (Command) received: %.*s", rx_size, buf);
         indicator_status_off(); // データ受信表示(仮オフ)
      }
+    */
 }
 
 // ポート1: KISSデータ用
