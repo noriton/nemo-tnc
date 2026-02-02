@@ -14,6 +14,7 @@
 #include "nemo_tnc.h"
 #include "indicator.h"
 #include "tnc_buffer.h"
+#include "packet_parser.h"
 
 void tnc_init(void)
 {
@@ -23,6 +24,10 @@ void tnc_init(void)
     
     tnc_buffer_init(); // TNC用バッファ初期化
     usb_init(); // USB 初期化処理の呼び出し
+
+    packet_parser_init(); // パケット解析タスクの初期化・起動
+
+    // その他のTNC初期化処理があればここに追加
 
 
 }

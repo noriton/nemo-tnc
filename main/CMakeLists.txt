@@ -4,4 +4,5 @@ idf_component_register(SRCS
     "tnc_init.c"
     "indicator.c"
     "tnc_buffer.c"
+    "packet_parser.c"
 INCLUDE_DIRS .)

@@ -59,7 +59,7 @@ static const char* const_string_desc[] = {
 
 // ポート0: コマンド入力用 (エコーバック実装)
 static void command_port_rx_callback(int itf, cdcacm_event_t *event) {
-uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE];
+    uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE];
     size_t rx_size = 0;
 
     // 1. TinyUSBの内部バッファからデータを取り出す
@@ -71,7 +71,7 @@ uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE];
 
         // 3. リングバッファにデータを送る
         // 第4引数は待ち時間（ms）。コールバック内なので待機せず「0」
-        BaseType_t res = xRingbufferSend(usb_rx_ringbuf, buf, rx_size, 0);
+        BaseType_t res = xRingbufferSend(usb_rb[0], buf, rx_size, 0);
         
         if (res != pdTRUE) {
             // バッファがいっぱいなら警告
