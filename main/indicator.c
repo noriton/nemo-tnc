@@ -5,8 +5,8 @@
 #include "freertos/task.h"
 #include "esp_timer.h" // 時刻取得用
 
-#define LED_STRIP_GPIO       38
-#define LED_STRIP_BLINK_GPIO  38
+#define LED_STRIP_GPIO       4
+#define LED_STRIP_BLINK_GPIO  4
 #define LED_STRIP_COUNT      1
 #define LED_STRIP_MAX_LEDS    1
 
@@ -43,13 +43,13 @@ static void indicator_task(void *pvParameters) {
             case TNC_ST_IDLE:
                 // 呼吸（フェードイン・アウト）
                 for (int i = 2; i < 20; i++) {
-                    led_strip_set_pixel(led_strip, 0, 0, 0, i);
+                    led_strip_set_pixel(led_strip, 0, i, 0, i);
                     led_strip_refresh(led_strip);
                     vTaskDelay(pdMS_TO_TICKS(50));
                     if (current_state != TNC_ST_IDLE) break;
                 }
                 for (int i = 20; i >= 2; i--) {
-                    led_strip_set_pixel(led_strip, 0, 0, 0, i);
+                    led_strip_set_pixel(led_strip, 0, i, 0, i);
                     led_strip_refresh(led_strip);
                     vTaskDelay(pdMS_TO_TICKS(50));
                     if (current_state != TNC_ST_IDLE) break;
@@ -58,7 +58,7 @@ static void indicator_task(void *pvParameters) {
 
             case TNC_ST_RX:
                 // 受信中はパチパチ光る
-                led_strip_set_pixel(led_strip, 0, 0, 0, 50);
+                led_strip_set_pixel(led_strip, 0, 0, 50, 0);
                 led_strip_refresh(led_strip);
                 vTaskDelay(pdMS_TO_TICKS(30));
                 led_strip_set_pixel(led_strip, 0, 0, 0, 0);

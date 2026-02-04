@@ -4,5 +4,8 @@ idf_component_register(SRCS
     "tnc_init.c"
     "indicator.c"
     "tnc_buffer.c"
-    "packet_parser.c"
-INCLUDE_DIRS .)
+    "command_parser.c"
+    "tnc_settings.c"
+INCLUDE_DIRS "."
+PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer
+)

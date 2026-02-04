@@ -14,11 +14,11 @@
 /* プロジェクト固有のヘッダー */
 #include "tnc_buffer.h"   // usb_rx_ringbuf のハンドルを参照するため
 #include "indicator.h"    // もし解析中にLEDを光らせるなら必要
-#include "packet_parser.h" // 自身のヘッダー（タスクのプロトタイプ宣言など）
-#include "packet_parser.h"
+#include "command_parser.h" // 自身のヘッダー（タスクのプロトタイプ宣言など）
 #include "tnc_buffer.h"
 #include "tinyusb_cdc_acm.h"
 #include "esp_log.h"
+#include "tnc_settings.h"
 
 static const char *TAG = "PARSER";
 
@@ -28,16 +28,32 @@ static int line_pos = 0;
 
 // 仮のコマンド処理関数
 static void process_command(char *cmd) {
-    ESP_LOGI(TAG, "Command Received: %s", cmd);
-    // ここで "MYCALL" などを判定する
-    if (strcmp(cmd, "VERSION") == 0) {
+    // 簡易的な解析: "MYCALL " で始まるかチェック
+    if (strncmp(cmd, "MYCALL ", 7) == 0) {
+        char *new_call = cmd + 7; // "MYCALL " の後の文字列
+        if (settings_save_mycall(new_call) == ESP_OK) {
+            const char *msg = "\r\nCallsign saved!\r\n";
+            tinyusb_cdcacm_write_queue(0, (uint8_t *)msg, strlen(msg));
+        }
+    } else if (strcmp(cmd, "MYCALL") == 0) {
+        char saved_call[16] = {0};
+        if (settings_load_mycall(saved_call, sizeof(saved_call)) == ESP_OK) {
+            char msg[32];
+            snprintf(msg, sizeof(msg), "\r\nMYCALL is %s\r\n", saved_call);
+            tinyusb_cdcacm_write_queue(0, (uint8_t *)msg, strlen(msg));
+        } else {
+            const char *msg = "\r\nMYCALL not set\r\n";
+            tinyusb_cdcacm_write_queue(0, (uint8_t *)msg, strlen(msg));
+        }
+    } else if (strcmp(cmd, "VERSION") == 0) {
         const char *ver = "\r\nNEMO-TNC v0.1\r\n";
         tinyusb_cdcacm_write_queue(0, (uint8_t *)ver, strlen(ver));
-        tinyusb_cdcacm_write_flush(0, 0);
     }
+
+    tinyusb_cdcacm_write_flush(0, 0);
 }
 
-static void packet_parser_task(void *pvParameters) {
+static void command_parser_task(void *pvParameters) {
     while (1) {
         for (int itf = 0; itf < 2; itf++) {
             size_t size;
@@ -75,28 +91,12 @@ static void packet_parser_task(void *pvParameters) {
     }
 }
 
-void packet_parser_init (void) {
+void command_parser_init (void) {
     // 解析タスクの起動
-    xTaskCreate(packet_parser_task, "packet_parser", 4096, NULL, 10, NULL);
+    xTaskCreate(command_parser_task, "command_parser", 4096, NULL, 10, NULL);
 }
 
 
 /*
-void packet_parser_task(void *pvParameters) {
-    while (1) {
-        size_t size;
-        // リングバッファからデータを取り出す
-        uint8_t *data = (uint8_t *)xRingbufferReceiveUpTo(usb_rx_ringbuf, &size, pdMS_TO_TICKS(100), 128);
 
-        if (data != NULL) {
-            // 受信したデータを反対側のポート（ITF 1）に書き出すテスト
-            // ※引数の 1 は「もう一つのポート」を指すと仮定
-            tinyusb_cdcacm_write_queue(1, data, size);
-            tinyusb_cdcacm_write_flush(1, 0);
-
-            // 使い終わったバッファを返却
-            vRingbufferReturnItem(usb_rx_ringbuf, (void *)data);
-        }
-    }
-}
 */
