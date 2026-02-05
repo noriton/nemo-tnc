@@ -19,6 +19,7 @@
 #include "tinyusb_cdc_acm.h"
 #include "esp_log.h"
 #include "tnc_settings.h"
+#include "ax25.h" // encode_callsign を使うため
 
 static const char *TAG = "PARSER";
 
@@ -48,8 +49,28 @@ static void process_command(char *cmd) {
     } else if (strcmp(cmd, "VERSION") == 0) {
         const char *ver = "\r\nNEMO-TNC v0.1\r\n";
         tinyusb_cdcacm_write_queue(0, (uint8_t *)ver, strlen(ver));
-    }
+    } else if (strncmp(cmd, "ENCODE ", 7) == 0) {
+        char *call = cmd + 7;
+        // テスト用: "JH1XXX" をAX.25形式にエンコードして表示
+//        uint8_t encoded[7];
+//        encode_callsign(encoded, testcall, 0, true);
+        char encoded[7];
+        encode_callsign((uint8_t *)encoded, call, 0, true); 
 
+        const char *sn = "\r\n";
+        tinyusb_cdcacm_write_queue(0, (uint8_t *)sn, strlen(sn));
+
+        // "JH1XXX" の場合、期待される出力（一部）:
+        // 'J' (0x4A) -> 0x94
+        // 'H' (0x48) -> 0x90
+        // '1' (0x31) -> 0x62
+        for (int i = 0; i < 7; i++) {
+            char byte_str[5];
+            snprintf(byte_str, sizeof(byte_str), "%02X ", encoded[i]);
+            tinyusb_cdcacm_write_queue(0, (uint8_t *)byte_str, strlen(byte_str));
+        }
+        tinyusb_cdcacm_write_queue(0, (uint8_t *)sn, strlen(sn));
+    }
     tinyusb_cdcacm_write_flush(0, 0);
 }
 
