@@ -1,4 +1,5 @@
 #include "command_parser.h"
+#include "tx_frame.h"
 #include "tnc_buffer.h"
 #include "tnc_settings.h"
 #include "ax25.h"
@@ -41,7 +42,7 @@ static int cmd_mycall(int argc, char **argv) {
     return 0;
 }
 
-// TESTTX コマンド (ITF 1 へダンプを流す)
+// TESTTX コマンド (tx_frame経由で送信)
 static int cmd_testtx(int argc, char **argv) {
     char my_call[16] = {0};
     settings_load_mycall(my_call, sizeof(my_call));
@@ -54,39 +55,20 @@ static int cmd_testtx(int argc, char **argv) {
     uint8_t frame[300];
     const char *msg = (argc > 1) ? argv[1] : "HELLO";
     
-    // 平文の表示
+    // 平文の表示 (Port 0)
     char plain_msg[64];
     int p_len = snprintf(plain_msg, sizeof(plain_msg), "\r\nSending: %s\r\n", msg);
     tinyusb_cdcacm_write_queue(0, (uint8_t *)plain_msg, p_len);
 
     size_t len = ax25_build_ui_frame(&addr, (uint8_t *)msg, strlen(msg), frame);
 
-    // ポート1へ出力 (Hex Dump)
-    tinyusb_cdcacm_write_queue(1, (uint8_t *)"\r\n--- AX.25 Frame ---\r\n", 23);
-    for (size_t i = 0; i < len; i++) {
-        char hex[4];
-        sprintf(hex, "%02X ", frame[i]);
-        tinyusb_cdcacm_write_queue(1, (uint8_t *)hex, 3);
-        if ((i + 1) % 16 == 0) tinyusb_cdcacm_write_queue(1, (uint8_t *)"\r\n", 2);
-    }
-    tinyusb_cdcacm_write_queue(1, (uint8_t *)"\r\n", 2);
-    tinyusb_cdcacm_write_flush(1, pdMS_TO_TICKS(10));
-
-    // デコードテスト
-    char decoded_info[256];
-    int decoded_len = ax25_decode_ui_info(frame, len, decoded_info, sizeof(decoded_info));
-
-    if (decoded_len >= 0) {
-        char decode_msg[300];
-        int d_len = snprintf(decode_msg, sizeof(decode_msg), "Decoded: %s\r\n", decoded_info);
-        tinyusb_cdcacm_write_queue(0, (uint8_t *)decode_msg, d_len);
+    // TX Frameへエンキュー
+    if (tx_frame_enqueue(frame, len) == ESP_OK) {
+        tinyusb_cdcacm_write_queue(0, (uint8_t *)"Queued to TX Buffer.\r\n", 22);
     } else {
-        char err_msg[32];
-        snprintf(err_msg, sizeof(err_msg), "Decode Failed: %d\r\n", decoded_len);
-        tinyusb_cdcacm_write_queue(0, (uint8_t *)err_msg, strlen(err_msg));
+        tinyusb_cdcacm_write_queue(0, (uint8_t *)"Failed to Queue.\r\n", 18);
     }
 
-    tinyusb_cdcacm_write_queue(0, (uint8_t *)"Sent to Data Port.\r\n", 20);
     tinyusb_cdcacm_write_flush(0, 0);
     return 0;
 }

@@ -17,6 +17,7 @@
 #include "command_parser.h"
 #include "nvs_flash.h"
 #include "tnc_settings.h"
+#include "rx_frame.h"
 
 char mycall[16] = "N0CALL"; // デフォルトコールサイン
 
@@ -46,6 +47,7 @@ void tnc_init(void)
     usb_init(); // USB 初期化処理の呼び出し
 
     command_parser_init(); // コマンド解析タスクの初期化・起動
+    rx_frame_init(); // RXフレーム受信タスク起動 (現状はLoopback/Debug用)
 
     // その他のTNC初期化処理があればここに追加
 
