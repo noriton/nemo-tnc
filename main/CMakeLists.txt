@@ -6,7 +6,9 @@ idf_component_register(SRCS
     "tnc_buffer.c"
     "command_parser.c"
     "tnc_settings.c"
+    "ax25.c"
     "ax25_utils.c"
+    "ax25_fcs.c"
 INCLUDE_DIRS "."
-PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer
+PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console
 )
