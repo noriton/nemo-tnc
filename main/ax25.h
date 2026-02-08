@@ -50,4 +50,15 @@ size_t decode_callsign(const uint8_t *in_buf, char *callsign, uint8_t *ssid);
 uint16_t ax25_fcs_calculate(const uint8_t *data, size_t len);
 
 
+/**
+ * @brief AX.25 UIフレームから情報フィールドを取り出す
+ * @param frame 受信したAX.25フレーム全体（FCS込みでも可だが、使わない）
+ * @param frame_len フレーム長
+ * @param out_info 情報フィールドの格納先
+ * @param max_info_len 格納先の最大サイズ
+ * @return 取得した情報フィールドのバイト数（負の値はエラー）
+ */
+int ax25_decode_ui_info(const uint8_t *frame, size_t frame_len, char *out_info, size_t max_info_len);
+
+
 #endif // AX25_H
