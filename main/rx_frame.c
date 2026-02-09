@@ -30,8 +30,21 @@ static void rx_frame_task(void *pvParameters) {
             tinyusb_cdcacm_write_queue(1, (uint8_t *)"\r\n", 2);
 
             // 2. Decode and display message
+            uint8_t *dec_ptr = item;
+            size_t dec_len = item_size;
+
+            // Strip Start Flag
+            if (dec_len > 0 && dec_ptr[0] == 0x7E) {
+                dec_ptr++;
+                dec_len--;
+            }
+            // Strip End Flag
+            if (dec_len > 0 && dec_ptr[dec_len - 1] == 0x7E) {
+                dec_len--;
+            }
+
             char decoded_info[256];
-            int decoded_len = ax25_decode_ui_info(item, item_size, decoded_info, sizeof(decoded_info));
+            int decoded_len = ax25_decode_ui_info(dec_ptr, dec_len, decoded_info, sizeof(decoded_info));
 
             if (decoded_len >= 0) {
                 char decode_msg[300];
