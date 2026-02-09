@@ -16,7 +16,7 @@ static void rx_frame_task(void *pvParameters) {
 
     while (1) {
         // Receive item from ring buffer
-        item = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY);
+        item = (uint8_t *)xRingbufferReceive(tx_ringbuf[0], &item_size, portMAX_DELAY);
 
         if (item != NULL) {
             // 1. Hex Dump to Port 1
@@ -59,7 +59,7 @@ static void rx_frame_task(void *pvParameters) {
             tinyusb_cdcacm_write_flush(1, pdMS_TO_TICKS(10));
 
             // Return item
-            vRingbufferReturnItem(tx_ringbuf, (void *)item);
+            vRingbufferReturnItem(tx_ringbuf[0], (void *)item);
         }
     }
 }

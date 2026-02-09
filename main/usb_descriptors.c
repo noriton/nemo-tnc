@@ -78,18 +78,7 @@ static void command_port_rx_callback(int itf, cdcacm_event_t *event) {
             ESP_LOGW("USB_RX", "Ringbuffer full, data dropped!");
         }
     }
-    /*
-    size_t rx_size = 0;
-    uint8_t buf[64];
-    esp_err_t ret = tinyusb_cdcacm_read(itf, buf, sizeof(buf), &rx_size);
-    if (ret == ESP_OK && rx_size > 0) {
-        // テスト用: 受信した文字をそのまま打ち返す(Echo)
-        tinyusb_cdcacm_write_queue(itf, buf, rx_size);
-        tinyusb_cdcacm_write_flush(itf, 0);
-        ESP_LOGI(TAG, "Port 0 (Command) received: %.*s", rx_size, buf);
-        indicator_status_off(); // データ受信表示(仮オフ)
-     }
-    */
+
 }
 
 // ポート1: KISSデータ用 (現在はコマンド入力も受け付ける)

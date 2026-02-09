@@ -66,8 +66,8 @@ static void indicator_task(void *pvParameters) {
                 vTaskDelay(pdMS_TO_TICKS(30));
                 
                 int64_t now = esp_timer_get_time();
-                // 700,000μs = 700ms 以上経過していたらIDLEへ
-                if ((now - last_rx_time) > 700000) {
+                // 500,000μs = 500ms 以上経過していたらIDLEへ
+                if ((now - last_rx_time) > 500000) {
                     current_state = TNC_ST_IDLE;
                 }
                 break;

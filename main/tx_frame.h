@@ -12,6 +12,6 @@
  * @param len   Length of the frame data.
  * @return esp_err_t ESP_OK on success, ESP_FAIL on failure (e.g., buffer full).
  */
-esp_err_t tx_frame_enqueue(const uint8_t *frame, size_t len);
+esp_err_t tx_frame_enqueue(const uint8_t *frame, size_t len, uint8_t ifp);
 
 #endif // TX_FRAME_H
