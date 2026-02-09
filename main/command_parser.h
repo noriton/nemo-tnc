@@ -8,12 +8,13 @@
  * @brief コマンド解析タスク本体
  * * リングバッファからデータを吸い出し、コマンド解析やポート間のエコーバックを行います。
  */
-// void command_parser_task(void *pvParameters);
-
 /**
- * @brief (オプション) 解析タスクの初期化や起動を管理する関数
- * app_mainでの記述をシンプルにしたい場合に用意します。
+ * @brief コンソールコマンドを登録する関数
+ * pc_interface から呼び出されます。
  */
-void command_parser_init(void);
+void register_commands(void);
+
+// void command_parser_init(void); // 廃止
+
 
 #endif // COMMAND_PARSER_H

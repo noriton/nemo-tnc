@@ -15,6 +15,7 @@
 #include "indicator.h"
 #include "tnc_buffer.h"
 #include "command_parser.h"
+#include "pc_interface.h"
 #include "nvs_flash.h"
 #include "tnc_settings.h"
 #include "rx_frame.h"
@@ -46,7 +47,9 @@ void tnc_init(void)
     tnc_buffer_init(); // TNC用バッファ初期化
     usb_init(); // USB 初期化処理の呼び出し
 
-    command_parser_init(); // コマンド解析タスクの初期化・起動
+    // command_parser_init(); // 廃止
+    pc_interface_init();    // PCインターフェース初期化 (Dual Port)
+
     rx_frame_init(); // RXフレーム受信タスク起動 (現状はLoopback/Debug用)
 
     // その他のTNC初期化処理があればここに追加

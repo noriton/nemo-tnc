@@ -92,15 +92,19 @@ static void command_port_rx_callback(int itf, cdcacm_event_t *event) {
     */
 }
 
-// ポート1: KISSデータ用
+// ポート1: KISSデータ用 (現在はコマンド入力も受け付ける)
 static void data_port_rx_callback(int itf, cdcacm_event_t *event) {
+    uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE];
     size_t rx_size = 0;
-    uint8_t buf[512];
+
     esp_err_t ret = tinyusb_cdcacm_read(itf, buf, sizeof(buf), &rx_size);
     if (ret == ESP_OK && rx_size > 0) {
-        // ここにKISSパケット処理を記述
-        ESP_LOGI(TAG, "Port 1 (Data) received %d bytes", rx_size);
-        indicator_status_data_rx(); // USB接続済み表示(仮: 点滅)
+        // リングバッファ1にデータを送る
+        BaseType_t res = xRingbufferSend(usb_rb[1], buf, rx_size, 0);
+        if (res != pdTRUE) {
+            ESP_LOGW("USB_RX", "Ringbuffer 1 full, data dropped!");
+        }
+        indicator_status_data_rx(); // データ受信表示
     }
 }
 

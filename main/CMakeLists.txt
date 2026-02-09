@@ -5,6 +5,7 @@ idf_component_register(SRCS
     "indicator.c"
     "tnc_buffer.c"
     "command_parser.c"
+    "pc_interface.c"
     "tnc_settings.c"
     "tx_frame.c"
     "rx_frame.c"

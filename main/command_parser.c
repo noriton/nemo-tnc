@@ -6,19 +6,18 @@
 #include "tinyusb_cdc_acm.h"
 #include "esp_console.h"
 #include "esp_log.h"
+#include "pc_interface.h"
 #include <string.h>
 
 static const char *TAG = "CMD_PARSER";
-static uint8_t line_buf[128];
-static int line_pos = 0;
 
 // --- 各コマンドの実装関数 ---
 
 // VERSION コマンド
 static int cmd_version(int argc, char **argv) {
     const char *ver = "\r\nNEMO-TNC v0.1 (esp_console)\r\n";
-    tinyusb_cdcacm_write_queue(0, (uint8_t *)ver, strlen(ver));
-    tinyusb_cdcacm_write_flush(0, 0);
+    // 結果を「コマンド入力ポート」に出力
+    pc_write_feedback((uint8_t *)ver, strlen(ver));
     return 0;
 }
 
@@ -26,19 +25,18 @@ static int cmd_version(int argc, char **argv) {
 static int cmd_mycall(int argc, char **argv) {
     if (argc > 1) {
         if (settings_save_mycall(argv[1]) == ESP_OK) {
-            tinyusb_cdcacm_write_queue(0, (uint8_t *)"Saved.\r\n", 8);
+            pc_write_feedback((uint8_t *)"Saved.\r\n", 8);
         }
     } else {
         char call[16] = {0};
         if (settings_load_mycall(call, sizeof(call)) == ESP_OK) {
             char msg[32];
             int len = snprintf(msg, sizeof(msg), "\r\nMYCALL: %s\r\n", call);
-            tinyusb_cdcacm_write_queue(0, (uint8_t *)msg, len);
+            pc_write_feedback((uint8_t *)msg, len);
         } else {
-            tinyusb_cdcacm_write_queue(0, (uint8_t *)"MYCALL not set.\r\n", 17);
+            pc_write_feedback((uint8_t *)"MYCALL not set.\r\n", 17);
         }
     }
-    tinyusb_cdcacm_write_flush(0, 0);
     return 0;
 }
 
@@ -55,26 +53,33 @@ static int cmd_testtx(int argc, char **argv) {
     uint8_t frame[300];
     const char *msg = (argc > 1) ? argv[1] : "HELLO";
     
-    // 平文の表示 (Port 0)
+    // 平文の表示 (Input Portへフィードバック)
     char plain_msg[64];
     int p_len = snprintf(plain_msg, sizeof(plain_msg), "\r\nSending: %s\r\n", msg);
-    tinyusb_cdcacm_write_queue(0, (uint8_t *)plain_msg, p_len);
+    pc_write_feedback((uint8_t *)plain_msg, p_len);
 
     size_t len = ax25_build_ui_frame(&addr, (uint8_t *)msg, strlen(msg), frame);
 
     // TX Frameへエンキュー
     if (tx_frame_enqueue(frame, len) == ESP_OK) {
-        tinyusb_cdcacm_write_queue(0, (uint8_t *)"Queued to TX Buffer.\r\n", 22);
+        pc_write_feedback((uint8_t *)"Queued to TX Buffer.\r\n", 22);
     } else {
-        tinyusb_cdcacm_write_queue(0, (uint8_t *)"Failed to Queue.\r\n", 18);
+        pc_write_feedback((uint8_t *)"Failed to Queue.\r\n", 18);
     }
 
-    tinyusb_cdcacm_write_flush(0, 0);
+    // TESTTXは送信コマンドなので、受信側の「もう一方のポート」へのHEXダンプ出力は
+    // ここではなく rx_frame.c で行うべきだが、今回の要件「出力結果をもう一つのポートに表示」
+    // に従い、ここでも何らかの表示をするか？
+    // いえ、TESTTXは「送信」コマンドであり、実行結果は「キューに入れた」ことです。
+    // 「受信した」結果は rx_frame が担当します。
+    // rx_frame は現在 Port 1 固定ですが、ここも pc_write_result 的な動きが必要なら修正要。
+    // しかし rx_frame は非同期タスクなので g_cmd_port を参照できない。
+    // 今回はコマンド応答のクロス表示がメインなので、これで良しとします。
+
     return 0;
 }
 
 // --- コマンド登録の初期化 ---
-// command_parser.c の register_commands 内
 
 void register_commands(void) {
     // --- 標準のヘルプコマンドを登録  ---
@@ -92,47 +97,4 @@ void register_commands(void) {
     }
 }
 
-
-// --- メインタスク ---
-void command_parser_task(void *pvParameters) {
-    esp_console_config_t console_config = ESP_CONSOLE_CONFIG_DEFAULT();
-    esp_console_init(&console_config);
-    register_commands();
-
-    while (1) {
-        size_t size;
-        uint8_t *data = (uint8_t *)xRingbufferReceiveUpTo(usb_rb[0], &size, 0, 128);
-
-        if (data != NULL) {
-            for (int i = 0; i < size; i++) {
-                // エコーバック
-                tinyusb_cdcacm_write_queue(0, &data[i], 1);
-                tinyusb_cdcacm_write_flush(0, 0);
-
-                if (data[i] == '\r' || data[i] == '\n') {
-                    if (line_pos > 0) {
-                        line_buf[line_pos] = '\0';
-                        int ret;
-                        esp_err_t err = esp_console_run((char *)line_buf, &ret);
-                        if (err == ESP_ERR_NOT_FOUND) {
-                            tinyusb_cdcacm_write_queue(0, (uint8_t *)"\r\nUnknown command\r\n", 19);
-                        }
-                        line_pos = 0;
-                        tinyusb_cdcacm_write_queue(0, (uint8_t *)"\r\nTNC> ", 7);
-                    }
-                } else if (line_pos < sizeof(line_buf) - 1) {
-                    line_buf[line_pos++] = data[i];
-                }
-            }
-            vRingbufferReturnItem(usb_rb[0], (void *)data);
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
-
-void command_parser_init (void) {
-    register_commands();
-    // 解析タスクの起動
-    xTaskCreate(command_parser_task, "command_parser", 8192, NULL, 10, NULL);
-}
 
