@@ -56,44 +56,29 @@ static const char* const_string_desc[] = {
     "TNC-Data-KISS"                // 5: Port 1 Name
 };
 
-
-// ポート0: コマンド入力用 (エコーバック実装)
-static void command_port_rx_callback(int itf, cdcacm_event_t *event) {
+// USBポート入力用コールバック (共通化)
+void usb_port_rx_callback(int itf, cdcacm_event_t *event) {
     uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE];
     size_t rx_size = 0;
 
-    // 1. TinyUSBの内部バッファからデータを取り出す
+    // USBからデータを読み取る
     esp_err_t ret = tinyusb_cdcacm_read(itf, buf, sizeof(buf), &rx_size);
     
     if (ret == ESP_OK && rx_size > 0) {
-        // 2. LEDを「受信中」ステートに（昨日作ったやつですね！）
-        indicator_set_state(TNC_ST_RX);
-
-        // 3. リングバッファにデータを送る
-        // 第4引数は待ち時間（ms）。コールバック内なので待機せず「0」
-        BaseType_t res = xRingbufferSend(usb_rb[0], buf, rx_size, 0);
-        
-        if (res != pdTRUE) {
-            // バッファがいっぱいなら警告
-            ESP_LOGW("USB_RX", "Ringbuffer full, data dropped!");
+        // インジケータ制御
+        if (itf == 0) {
+             indicator_set_state(TNC_ST_RX);
+        } else {
+             indicator_status_data_rx();
         }
-    }
 
-}
-
-// ポート1: KISSデータ用 (現在はコマンド入力も受け付ける)
-static void data_port_rx_callback(int itf, cdcacm_event_t *event) {
-    uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE];
-    size_t rx_size = 0;
-
-    esp_err_t ret = tinyusb_cdcacm_read(itf, buf, sizeof(buf), &rx_size);
-    if (ret == ESP_OK && rx_size > 0) {
-        // リングバッファ1にデータを送る
-        BaseType_t res = xRingbufferSend(usb_rb[1], buf, rx_size, 0);
-        if (res != pdTRUE) {
-            ESP_LOGW("USB_RX", "Ringbuffer 1 full, data dropped!");
+        // リングバッファへデータを送る (範囲チェック付き)
+        if (itf < 2) {
+            BaseType_t res = xRingbufferSend(usb_rb[itf], buf, rx_size, 0);
+            if (res != pdTRUE) {
+                ESP_LOGW("USB_RX", "Ringbuffer %d full, data dropped!", itf);
+            }
         }
-        indicator_status_data_rx(); // データ受信表示
     }
 }
 
@@ -125,20 +110,20 @@ void usb_init(void)
 
     ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
 
-    // 2. CDC ポート 0 (Command) の設定
+    // CDC ポート 0 の設定
     tinyusb_config_cdcacm_t acm_cfg_0 = {
         .cdc_port = TINYUSB_CDC_ACM_0,
-        .callback_rx = &command_port_rx_callback,
+        .callback_rx = &usb_port_rx_callback,
         .callback_rx_wanted_char = NULL,
         .callback_line_state_changed = NULL,
         .callback_line_coding_changed = NULL
     };
     ESP_ERROR_CHECK(tinyusb_cdcacm_init(&acm_cfg_0));
 
-    // 3. CDC ポート 1 (Data/KISS) の設定
+    // CDC ポート 1 の設定
     tinyusb_config_cdcacm_t acm_cfg_1 = {
         .cdc_port = TINYUSB_CDC_ACM_1,
-        .callback_rx = &data_port_rx_callback,
+        .callback_rx = &usb_port_rx_callback,
         .callback_rx_wanted_char = NULL,
         .callback_line_state_changed = NULL,
         .callback_line_coding_changed = NULL
