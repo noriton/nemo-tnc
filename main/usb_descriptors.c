@@ -67,9 +67,9 @@ void usb_port_rx_callback(int itf, cdcacm_event_t *event) {
     if (ret == ESP_OK && rx_size > 0) {
         // インジケータ制御
         if (itf == 0) {
-             indicator_set_state(TNC_ST_RX);
+            indicator_set_state(TNC_ST_RX);　//USBデータレシーブポート0
         } else {
-             indicator_status_data_rx();
+            indicator_set_state(TNC_ST_RX);　//USBデータレシーブポート1
         }
 
         // リングバッファへデータを送る (範囲チェック付き)
