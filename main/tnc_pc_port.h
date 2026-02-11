@@ -18,5 +18,3 @@ typedef struct {
     int line_pos;
 } tnc_pc_port_t;
 
-// 共通のMutex（command_parser.c などで定義）
-extern SemaphoreHandle_t console_mutex;

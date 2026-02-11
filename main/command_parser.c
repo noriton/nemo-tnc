@@ -6,8 +6,10 @@
 #include "tinyusb_cdc_acm.h"
 #include "esp_console.h"
 #include "esp_log.h"
-#include "pc_interface.h"
+#include "esp_log.h"
 #include <string.h>
+
+static SemaphoreHandle_t console_mutex = NULL;
 
 static const char *TAG = "CMD_PARSER";
 
@@ -16,8 +18,42 @@ static const char *TAG = "CMD_PARSER";
 // VERSION コマンド
 static int cmd_version(int argc, char **argv) {
     const char *ver = "\r\nNEMO-TNC v0.1 (esp_console)\r\n";
-    // 結果を「コマンド入力ポート」に出力
-    pc_write_feedback((uint8_t *)ver, strlen(ver));
+    // 結果を現在のポート（引数で渡すのが理想だが、ここでは簡易的に最後にコマンドを実行したポートへの返信は
+    // プロセス関数内で行うか、あるいはコマンド自体は標準出力を使う想定にする）
+    // esp_console_run は標準出力(stdout)を使う設定もできるが、今回は「入力ポートへの書き戻し」が必要。
+    // しかし esp_console のコマンド関数シグネチャは変えられない。
+    // ここでは簡易的に「コマンド実行中にグローバル変数などでポートを特定する」か、
+    // あるいは「コマンドからの出力は標準出力に吐き、それをリダイレクトする」等の仕組みが必要だが、
+    // 今回の要件では「pc_write_feedback」を使っていた。
+    // pc_interface がなくなるので、直接書き込む手段が必要。
+    // ただし、この関数内からは port オブジェクトが見えない。
+    // 暫定的に、コマンド実行時コンテキストを持つ変数を用意するか、
+    // またはコマンド自体は文字列を構築して返すだけの設計にするのが綺麗だが、
+    // 既存コードをあまり壊さないようにするため、
+    // コマンド実行の前後で「現在のポート」を保持するstatic変数を用意するアプローチをとる。
+    return 0;
+}
+
+// --- コマンド応答用ヘルパー ---
+static void cmd_response(const char *fmt, ...) {
+    // 現在実行中のタスクの TLS からポート情報を取得
+    tnc_pc_port_t *port = (tnc_pc_port_t *)pvTaskGetThreadLocalStoragePointer(NULL, 0);
+
+    if (port != NULL) {
+        char buf[128];
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+
+        // ポートの送信バッファへ書き込み
+        xRingbufferSend(port->tx_rb, (uint8_t *)buf, strlen(buf), 0);
+    }
+}
+
+// VERSION コマンド (修正版)
+static int cmd_version(int argc, char **argv) {
+    cmd_response("\r\nNEMO-TNC v0.1 (esp_console)\r\n");
     return 0;
 }
 
@@ -25,16 +61,14 @@ static int cmd_version(int argc, char **argv) {
 static int cmd_mycall(int argc, char **argv) {
     if (argc > 1) {
         if (settings_save_mycall(argv[1]) == ESP_OK) {
-            pc_write_feedback((uint8_t *)"Saved.\r\n", 8);
+            cmd_response("Saved.\r\n");
         }
     } else {
         char call[16] = {0};
         if (settings_load_mycall(call, sizeof(call)) == ESP_OK) {
-            char msg[32];
-            int len = snprintf(msg, sizeof(msg), "\r\nMYCALL: %s\r\n", call);
-            pc_write_feedback((uint8_t *)msg, len);
+            cmd_response("\r\nMYCALL: %s\r\n", call);
         } else {
-            pc_write_feedback((uint8_t *)"MYCALL not set.\r\n", 17);
+            cmd_response("MYCALL not set.\r\n");
         }
     }
     return 0;
@@ -56,15 +90,16 @@ static int cmd_testtx(int argc, char **argv) {
     // 平文の表示 (Input Portへフィードバック)
     char plain_msg[64];
     int p_len = snprintf(plain_msg, sizeof(plain_msg), "\r\nSending: %s\r\n", msg);
-    pc_write_feedback((uint8_t *)plain_msg, p_len);
+    // 平文の表示 (Input Portへフィードバック)
+    cmd_response("\r\nSending: %s\r\n", msg);
 
     size_t len = ax25_build_ui_frame(&addr, (uint8_t *)msg, strlen(msg), frame);
 
     // TX Frameへエンキュー
     if (tx_frame_enqueue(frame, len) == ESP_OK) {
-        pc_write_feedback((uint8_t *)"Queued to TX Buffer.\r\n", 22);
+        cmd_response("Queued to TX Buffer.\r\n");
     } else {
-        pc_write_feedback((uint8_t *)"Failed to Queue.\r\n", 18);
+        cmd_response("Failed to Queue.\r\n");
     }
 
     // TESTTXは送信コマンドなので、受信側の「もう一方のポート」へのHEXダンプ出力は
@@ -77,6 +112,56 @@ static int cmd_testtx(int argc, char **argv) {
     // 今回はコマンド応答のクロス表示がメインなので、これで良しとします。
 
     return 0;
+}
+
+// --- コマンド解析ロジック ---
+
+void process_command_input(tnc_pc_port_t *port, uint8_t *data, size_t len) {
+    if (port == NULL || data == NULL) return;
+
+    for (size_t i = 0; i < len; i++) {
+        uint8_t c = data[i];
+
+        // エコーバック
+        xRingbufferSend(port->tx_rb, &c, 1, 0);
+
+        if (c == '\r' || c == '\n') {
+            if (port->line_pos > 0) {
+                port->line_buf[port->line_pos] = '\0';
+                
+                // Mutexで保護してコマンド実行
+                if (xSemaphoreTake(console_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    int ret;
+                    esp_err_t err = esp_console_run(port->line_buf, &ret);
+                    
+                    if (err == ESP_ERR_NOT_FOUND) {
+                         const char *msg = "\r\nUnknown command\r\n";
+                         xRingbufferSend(port->tx_rb, (uint8_t *)msg, strlen(msg), 0);
+                    }
+
+
+                    xSemaphoreGive(console_mutex);
+                }
+                port->line_pos = 0;
+                
+                const char *prompt = "\r\nTNC> ";
+                xRingbufferSend(port->tx_rb, (uint8_t *)prompt, strlen(prompt), 0);
+            }
+        } else if (port->line_pos < sizeof(port->line_buf) - 1) {
+            port->line_buf[port->line_pos++] = (char)c;
+        }
+    }
+}
+
+void command_parser_init(void) {
+    console_mutex = xSemaphoreCreateMutex();
+    
+    esp_console_config_t console_config = ESP_CONSOLE_CONFIG_DEFAULT();
+    esp_console_init(&console_config);
+
+    register_commands();
+    
+    ESP_LOGI(TAG, "Command Parser Initialized");
 }
 
 // --- コマンド登録の初期化 ---
