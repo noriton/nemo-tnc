@@ -1,3 +1,6 @@
+#ifndef TNC_PC_PORT_H
+#define TNC_PC_PORT_H
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/ringbuf.h"
@@ -18,3 +21,6 @@ typedef struct {
     int line_pos;
 } tnc_pc_port_t;
 
+void tnc_pc_ports_init(void);
+
+#endif /* TNC_PC_PORT_H */

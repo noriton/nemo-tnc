@@ -5,6 +5,9 @@
 #include "esp_log.h"
 #include <string.h>
 
+
+void pc_port_task(void *pvParameters);
+
 tnc_pc_port_t pc_ports[2];
 
 void tnc_pc_ports_init(void) {
@@ -43,8 +46,7 @@ void pc_port_task(void *pvParameters) {
             // 一括処理へ変更
             if (port->mode == PORT_MODE_COMMAND) {
                 process_command_input(port, data, size);
-            } 
-            else if (port->mode == PORT_MODE_BRIDGE) {
+            } else if (port->mode == PORT_MODE_BRIDGE) {
                 // ToDo 4: 相方のポートへスルー
                 int peer_id = (port->id == 0) ? 1 : 0;
                 xRingbufferSend(pc_ports[peer_id].tx_rb, data, size, 0);

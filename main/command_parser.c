@@ -1,3 +1,4 @@
+#include <string.h>
 #include "command_parser.h"
 #include "tx_frame.h"
 #include "tnc_buffer.h"
@@ -6,33 +7,14 @@
 #include "tinyusb_cdc_acm.h"
 #include "esp_console.h"
 #include "esp_log.h"
-#include "esp_log.h"
-#include <string.h>
+
+static void register_commands(void);
 
 static SemaphoreHandle_t console_mutex = NULL;
 
 static const char *TAG = "CMD_PARSER";
 
 // --- 各コマンドの実装関数 ---
-
-// VERSION コマンド
-static int cmd_version(int argc, char **argv) {
-    const char *ver = "\r\nNEMO-TNC v0.1 (esp_console)\r\n";
-    // 結果を現在のポート（引数で渡すのが理想だが、ここでは簡易的に最後にコマンドを実行したポートへの返信は
-    // プロセス関数内で行うか、あるいはコマンド自体は標準出力を使う想定にする）
-    // esp_console_run は標準出力(stdout)を使う設定もできるが、今回は「入力ポートへの書き戻し」が必要。
-    // しかし esp_console のコマンド関数シグネチャは変えられない。
-    // ここでは簡易的に「コマンド実行中にグローバル変数などでポートを特定する」か、
-    // あるいは「コマンドからの出力は標準出力に吐き、それをリダイレクトする」等の仕組みが必要だが、
-    // 今回の要件では「pc_write_feedback」を使っていた。
-    // pc_interface がなくなるので、直接書き込む手段が必要。
-    // ただし、この関数内からは port オブジェクトが見えない。
-    // 暫定的に、コマンド実行時コンテキストを持つ変数を用意するか、
-    // またはコマンド自体は文字列を構築して返すだけの設計にするのが綺麗だが、
-    // 既存コードをあまり壊さないようにするため、
-    // コマンド実行の前後で「現在のポート」を保持するstatic変数を用意するアプローチをとる。
-    return 0;
-}
 
 // --- コマンド応答用ヘルパー ---
 static void cmd_response(const char *fmt, ...) {
@@ -96,7 +78,8 @@ static int cmd_testtx(int argc, char **argv) {
     size_t len = ax25_build_ui_frame(&addr, (uint8_t *)msg, strlen(msg), frame);
 
     // TX Frameへエンキュー
-    if (tx_frame_enqueue(frame, len) == ESP_OK) {
+    uint8_t portnum = 0; //暫定
+    if (tx_frame_enqueue(frame, len, portnum) == ESP_OK) {
         cmd_response("Queued to TX Buffer.\r\n");
     } else {
         cmd_response("Failed to Queue.\r\n");
@@ -122,33 +105,49 @@ void process_command_input(tnc_pc_port_t *port, uint8_t *data, size_t len) {
     for (size_t i = 0; i < len; i++) {
         uint8_t c = data[i];
 
-        // エコーバック
-        xRingbufferSend(port->tx_rb, &c, 1, 0);
+        if (c == '\n') continue;
 
-        if (c == '\r' || c == '\n') {
+        if (c == '\r') {
+            const char *crlf = "\r\n";
+            xRingbufferSend(port->tx_rb, (uint8_t*)crlf, 2, 0);
+
             if (port->line_pos > 0) {
                 port->line_buf[port->line_pos] = '\0';
-                
-                // Mutexで保護してコマンド実行
-                if (xSemaphoreTake(console_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                    int ret;
-                    esp_err_t err = esp_console_run(port->line_buf, &ret);
+
+                // Mutex で保護して実行
+                if (xSemaphoreTake(console_mutex, pdMS_TO_TICKS(100))) {
+                    // ★ここでTLSにポート情報をセット（リファクタリング適用）
+                    vTaskSetThreadLocalStoragePointer(NULL, 0, port);
                     
-                    if (err == ESP_ERR_NOT_FOUND) {
-                         const char *msg = "\r\nUnknown command\r\n";
-                         xRingbufferSend(port->tx_rb, (uint8_t *)msg, strlen(msg), 0);
-                    }
-
-
+                    int ret;
+                    esp_console_run(port->line_buf, &ret);
                     xSemaphoreGive(console_mutex);
+                } else {
+                    const char *busy = "Busy\r\n";
+                    xRingbufferSend(port->tx_rb, (uint8_t*)busy, strlen(busy), 0);
                 }
-                port->line_pos = 0;
-                
-                const char *prompt = "\r\nTNC> ";
-                xRingbufferSend(port->tx_rb, (uint8_t *)prompt, strlen(prompt), 0);
             }
-        } else if (port->line_pos < sizeof(port->line_buf) - 1) {
-            port->line_buf[port->line_pos++] = (char)c;
+            // コマンド実行後、バッファをリセットしてプロンプトを表示
+            port->line_pos = 0;
+            const char *prompt = "TNC> "; // 既に \r\n しているのでここはシンプルに
+            xRingbufferSend(port->tx_rb, (uint8_t*)prompt, strlen(prompt), 0);
+        } else {
+            // Backspace (0x08) や Delete (0x7F) の対応
+            if (c == 0x08 || c == 0x7F) {
+                if (port->line_pos > 0) {
+                    port->line_pos--;
+                    // 画面上の文字を消すエスケープシーケンス "\b \b"
+                    const char *bs = "\b \b"; 
+                    xRingbufferSend(port->tx_rb, (uint8_t*)bs, 3, 0);
+                }
+            } else if (c >= 0x20 && c <= 0x7E) {
+                // 表示可能文字のみバッファリング
+                if (port->line_pos < sizeof(port->line_buf) - 1) {
+                    port->line_buf[port->line_pos++] = c;
+                    // 入力文字をそのままエコーバック
+                    xRingbufferSend(port->tx_rb, &c, 1, 0);
+                }
+            }
         }
     }
 }
@@ -166,7 +165,7 @@ void command_parser_init(void) {
 
 // --- コマンド登録の初期化 ---
 
-void register_commands(void) {
+static void register_commands(void) {
     // --- 標準のヘルプコマンドを登録  ---
     esp_console_register_help_command();
 
