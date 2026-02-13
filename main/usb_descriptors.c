@@ -74,7 +74,7 @@ void usb_port_rx_callback(int itf, cdcacm_event_t *event) {
 
         // リングバッファへデータを送る (範囲チェック付き)
         if (itf < 2) {
-            BaseType_t res = xRingbufferSend(usb_rb[itf], buf, rx_size, 0);
+            BaseType_t res = xRingbufferSend(usb_from_pc[itf], buf, rx_size, 0);
             if (res != pdTRUE) {
                 ESP_LOGW("USB_RX", "Ringbuffer %d full, data dropped!", itf);
             }

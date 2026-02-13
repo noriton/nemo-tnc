@@ -15,9 +15,9 @@ void tnc_pc_ports_init(void) {
         pc_ports[i].id = i;
         pc_ports[i].mode = PORT_MODE_COMMAND; // 初期状態はどちらもコマンドモード
         
-        // RXバッファは USB受信バッファ (usb_rb) を参照する形にする
-        // これで usb_descriptors.c が usb_rb に入れたデータをここで吸い出せる
-        pc_ports[i].rx_rb = usb_rb[i];
+        // RXバッファは USB受信バッファ (usb_from_pc) を参照する形にする
+        // これで usb_descriptors.c が usb_from_pc に入れたデータをここで吸い出せる
+        pc_ports[i].rx_rb = usb_from_pc[i];
         
         // TXバッファは独自に作成 (あるいはこれも一本化可能だが、ひとまず既存維持)
         if (pc_ports[i].tx_rb == NULL) {
@@ -46,8 +46,32 @@ void pc_port_task(void *pvParameters) {
             // 一括処理へ変更
             if (port->mode == PORT_MODE_COMMAND) {
                 process_command_input(port, data, size);
+            } else if (port->mode == PORT_MODE_UICHAT) {
+                // ToDo 7: UIチャットモード処理
+                // 改行文字で区切られた文字列を生フレームとして送信 
+                // モードからエスケープする処理
+                // if (data[i] == ?) { //  +++ もしくは^C^C^C
+                //     port->mode = PORT_MODE_COMMAND;
+                // }
+            } else if (port->mode == PORT_MODE_TRANCEPORT) {
+                // ToDo 6: トランスペアレントモード処理
+                // トランスペアレントモードからエスケープする処理
+                // if (data[i] == ?) { //  +++ もしくは^C^C^C
+                //     port->mode = PORT_MODE_COMMAND;
+                // }
+            } else if (port->mode == PORT_MODE_KISS) {
+                // ToDo 5: KISSモード処理
+                // main command port ではこのモードにならない。
+
+            } else if (port->mode == PORT_MODE_TURNBACK) {
+                // 同一ポートのtoPCに分割して折り返し
+                // トランスペアレントモードからエスケープする処理
+                // if (data[i] == ?) { //  +++ もしくは^C^C^C
+                //     port->mode = PORT_MODE_COMMAND;
+                // }
+                xRingbufferSend(port->tx_rb, data, size, 0);
             } else if (port->mode == PORT_MODE_BRIDGE) {
-                // ToDo 4: 相方のポートへスルー
+                // 別のポートへスルー
                 int peer_id = (port->id == 0) ? 1 : 0;
                 xRingbufferSend(pc_ports[peer_id].tx_rb, data, size, 0);
             }
