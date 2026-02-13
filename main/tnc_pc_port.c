@@ -53,7 +53,7 @@ void pc_port_task(void *pvParameters) {
                 // if (data[i] == ?) { //  +++ もしくは^C^C^C
                 //     port->mode = PORT_MODE_COMMAND;
                 // }
-            } else if (port->mode == PORT_MODE_TRANCEPORT) {
+            } else if (port->mode == PORT_MODE_TRANSPORT) {
                 // ToDo 6: トランスペアレントモード処理
                 // トランスペアレントモードからエスケープする処理
                 // if (data[i] == ?) { //  +++ もしくは^C^C^C
