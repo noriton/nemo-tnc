@@ -32,17 +32,46 @@ void tnc_pc_ports_init(void) {
     }
 }
 
+static void flush_transport_buffer(tnc_pc_port_t *port) {
+    if (port->trans_len > 0) {
+        
+        // ★本来はここで AX.25 UIフレーム生成関数などを呼ぶ場所です
+        // 例: ax25_send_ui_frame(port->trans_buf, port->trans_len);
+        
+        // --- [デバッグ用] 送信したつもりでPCへ通知 ---
+        // 実際にパケットになったことが分かるようにフォーマットしてPCへ返す
+        char debug_msg[64];
+        snprintf(debug_msg, sizeof(debug_msg), "\r\n[TX Packet: %d bytes]\r\n", port->trans_len);
+        xRingbufferSend(port->tx_rb, (uint8_t*)debug_msg, strlen(debug_msg), 0);
+        
+        // データ本体もエコーバックしてみる（確認用）
+        xRingbufferSend(port->tx_rb, port->trans_buf, port->trans_len, 0);
+        
+        // -----------------------------------------------------
+
+        // 送信完了したのでバッファをクリア
+        port->trans_len = 0;
+    }
+}
+
 void pc_port_task(void *pvParameters) {
     tnc_pc_port_t *port = (tnc_pc_port_t *)pvParameters;
-    
+
     // 現在のタスクのTLSにポート情報を保存 (Index 0)
     vTaskSetThreadLocalStoragePointer(NULL, 0, port);
+
+    port->trans_len = 0;
+    port->last_rx_tick = xTaskGetTickCount();
 
     while (1) {
         size_t size;
         uint8_t *data = (uint8_t *)xRingbufferReceive(port->rx_rb, &size, pdMS_TO_TICKS(10));
         
+        // トランスペアレントモード用のタイムアウト処理用
+        TickType_t now = xTaskGetTickCount();
+
         if (data != NULL) {
+            port->last_rx_tick = now; // 最終受信時刻を更新
             // 一括処理へ変更
             if (port->mode == PORT_MODE_COMMAND) {
                 process_command_input(port, data, size);
@@ -54,11 +83,45 @@ void pc_port_task(void *pvParameters) {
                 //     port->mode = PORT_MODE_COMMAND;
                 // }
             } else if (port->mode == PORT_MODE_TRANSPORT) {
-                // ToDo 6: トランスペアレントモード処理
-                // トランスペアレントモードからエスケープする処理
-                // if (data[i] == ?) { //  +++ もしくは^C^C^C
-                //     port->mode = PORT_MODE_COMMAND;
-                // }
+                // ToDo 6: トランスポートモード処理
+                for (int i = 0; i < size; i++) {
+                    uint8_t c = data[i];
+
+                    // トランスポートモードからエスケープする処理
+                    // if (data[i] == ?) { //  最終的には+++ もしくは^C^C^C
+                    //     port->mode = PORT_MODE_COMMAND;
+                    // }
+
+                    // エスケープ処理 (Ctrl+C = 0x03 でコマンドモードへ戻る)
+                    if (c == 0x03) {
+                        flush_transport_buffer(port); // 残っているデータを吐き出す
+                        
+                        port->mode = PORT_MODE_COMMAND;
+                        const char *msg = "\r\nCommand Mode\r\nTNC> ";
+                        xRingbufferSend(port->tx_rb, (uint8_t*)msg, strlen(msg), 0);
+                        
+                        // バッファリセット
+                        port->line_pos = 0; 
+                        break; 
+                    }
+
+                    // バッファに格納
+                    if (port->trans_len < TNC_PACLEN) {
+                        port->trans_buf[port->trans_len++] = c;
+                    }
+
+                    // [条件1: PACLEN到達] 
+                    // バッファがいっぱいになったら即送信
+                    if (port->trans_len >= TNC_PACLEN) {
+                        flush_transport_buffer(port);
+                    } else if (port->trans_len > 0) {
+                    // [条件2: PACTIME経過]
+                    // 最後のデータ受信から一定時間(TNC_PACTIME)経過したら送信
+                        if ((now - port->last_rx_tick) > pdMS_TO_TICKS(TNC_PACTIME)) {
+                            flush_transport_buffer(port);
+                        }
+                    }
+                }
             } else if (port->mode == PORT_MODE_KISS) {
                 // ToDo 5: KISSモード処理
                 // main command port ではこのモードにならない。
@@ -74,6 +137,8 @@ void pc_port_task(void *pvParameters) {
                 // 別のポートへスルー
                 int peer_id = (port->id == 0) ? 1 : 0;
                 xRingbufferSend(pc_ports[peer_id].tx_rb, data, size, 0);
+            } else {
+
             }
             vRingbufferReturnItem(port->rx_rb, (void *)data);
         }

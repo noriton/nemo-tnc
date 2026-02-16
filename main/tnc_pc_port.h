@@ -4,7 +4,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/ringbuf.h"
+#include "freertos/task.h" // TickType_tのために必要
 
+// --- トランスペアレントモード用設定 ---
+#define TNC_PACLEN  256          // 最大パケット長 (バイト)
+#define TNC_PACTIME 500          // パケット送信待ち時間 (ms) - データが途切れてから送信するまでの時間
 typedef enum {
     PORT_MODE_COMMAND,      // コマンドモード (コマンドパーサで処理)
     PORT_MODE_UICHAT,       // UIチャットモード (改行文字で区切られた文字列を生フレームとして送信)
@@ -22,6 +26,10 @@ typedef struct {
     RingbufHandle_t tx_rb;     // TNC -> PC (送信)
     char line_buf[128];        // コマンド用の一行バッファ
     int line_pos;
+    // --- トランスペアレントモード用に追加 ---
+    uint8_t trans_buf[TNC_PACLEN]; // 送信待ちデータバッファ
+    int trans_len;                 // 現在溜まっているバイト数
+    TickType_t last_rx_tick;       // 最後にデータを受信した時刻
 } tnc_pc_port_t;
 
 void tnc_pc_ports_init(void);
