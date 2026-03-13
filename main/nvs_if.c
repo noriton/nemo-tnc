@@ -1,10 +1,10 @@
-#include "tnc_settings.h"
+#include "nvs_if.h"
 #include "nvs.h"
 #include "esp_log.h"
 
 static const char *TAG = "SETTINGS";
 
-esp_err_t settings_save_mycall(const char* callsign) {
+esp_err_t nvs_save_mycall(const char* callsign) {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open(SETTINGS_NAMESPACE, NVS_READWRITE, &my_handle);
     if (err != ESP_OK) return err;
@@ -17,7 +17,7 @@ esp_err_t settings_save_mycall(const char* callsign) {
     return err;
 }
 
-esp_err_t settings_load_mycall(char* buf, size_t max_len) {
+esp_err_t nvs_load_mycall(char* buf, size_t max_len) {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open(SETTINGS_NAMESPACE, NVS_READONLY, &my_handle);
     if (err != ESP_OK) return err;

@@ -11,6 +11,7 @@
 // --- トランスペアレントモード用設定 ---
 #define TNC_PACLEN  256          // 最大パケット長 (バイト)
 #define TNC_PACTIME 500          // パケット送信待ち時間 (ms) - データが途切れてから送信するまでの時間
+
 typedef enum tnc_port_mode{
     PORT_MODE_UICHAT,       // UIチャットモード (改行文字で区切られた文字列を生フレームとして送信)
     PORT_MODE_TRANSPORT,    // トランスペアレントモード  (受信データを長さとタイマーで分割して送信)
@@ -21,7 +22,7 @@ typedef enum tnc_port_mode{
     PORT_MODE_COMMAND     // コマンドモード (コマンドパーサで処理)
 } tnc_port_mode_t;
 
-typedef enum escape_state{
+typedef enum escape_state {
     ESC_STATE_IDLE,    // 無音待ち（1秒以上経過を待っている）
     ESC_STATE_READY,   // 無音確認済み（'+++' を受け入れ可能）
     ESC_STATE_DETECTED // '+++' 受信済み（その後の1秒無音を待っている）

@@ -10,6 +10,8 @@
 void send_uichat_packet(tnc_port_info_t *port, uint8_t *payload, size_t len);
 void poll_and_display_rx_packets(tnc_port_info_t *port);
 void pc_port_task(void *pvParameters);
+void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len);
+static int check_escape_with_guard(tnc_port_info_t *port, const uint8_t *data, size_t size);
 
 #define MAX_PORTS 2
 tnc_port_info_t pc_ports[MAX_PORTS];
@@ -116,44 +118,110 @@ void run_mode_command(tnc_port_info_t *port) {
     }
 }
 
-void run_mode_transport(tnc_port_info_t *port) {
-    port->trans_len = 0;
+static void run_mode_uichat(tnc_port_info_t *port) {
+    const char *prompt = "\r\n(UICHAT)> ";
+    xRingbufferSend(port->to_pc, (uint8_t*)prompt, strlen(prompt), 0);
+    
+    port->line_pos = 0;
+    port->esc_state = ESC_STATE_IDLE;
     port->last_rx_tick = xTaskGetTickCount();
 
-    while (port->mode == PORT_MODE_TRANSPORT) {
+    while (port->mode == PORT_MODE_UICHAT) {
         size_t size;
         uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(10));
         TickType_t now = xTaskGetTickCount();
 
+        // 1. ガードタイム付きエスケープ判定
+        if (check_escape_with_guard(port, data, size)) {
+            port->mode = PORT_MODE_COMMAND;
+            const char *msg = "\r\nOK\r\nTNC> ";
+            xRingbufferSend(port->to_pc, (uint8_t*)msg, strlen(msg), 0);
+            
+            if (data != NULL) {
+                vRingbufferReturnItem(port->from_pc, (void *)data);
+            }
+            break;
+        }
+
         if (data != NULL) {
             port->last_rx_tick = now;
-            for (int i = 0; i < size; i++) {
+
+            for (size_t i = 0; i < size; i++) {
                 uint8_t c = data[i];
 
-                // エスケープ処理 (Ctrl+C = 0x03)
-                if (c == 0x03) {
-                    flush_transport_buffer(port);
-                    port->mode = PORT_MODE_COMMAND;
-                    const char *msg = "\r\nCommand Mode\r\nTNC> ";
-                    xRingbufferSend(port->to_pc, (uint8_t*)msg, strlen(msg), 0);
-                    port->line_pos = 0;
-                    break;
-                }
+                // エコーバック (PC画面への返し)
+                xRingbufferSend(port->to_pc, &c, 1, 0);
 
-                // バッファリング
+                // 改行判定
+                if (c == '\r' || c == '\n') {
+                    if (port->line_pos > 0) {
+                        // ★メタデータ付きパケット送信 (トランスポートと共通のロジックを流用可能)
+                        enqueue_ui_packet(port, (uint8_t*)port->line_buf, port->line_pos);
+                        
+                        // 送信後の改行とプロンプト
+                        xRingbufferSend(port->to_pc, (uint8_t*)"\r\n(UICHAT)> ", 13, 0);
+                        port->line_pos = 0;
+                    }
+                } else if (c >= 0x20 && c <= 0x7E) {
+                    // 表示可能文字のみバッファへ
+                    if (port->line_pos < sizeof(port->line_buf) - 1) {
+                        port->line_buf[port->line_pos++] = c;
+                    }
+                }
+            }
+            vRingbufferReturnItem(port->from_pc, (void *)data);
+        } else {
+            // 受信パケットのポーリング処理（ダミー）
+            // poll_and_display_rx_packets(port);
+        }
+    }
+}
+
+void run_mode_transport(tnc_port_info_t *port) {
+    port->trans_len = 0;
+    port->esc_state = ESC_STATE_IDLE; // エスケープ判定状態を初期化
+    port->last_rx_tick = xTaskGetTickCount();
+
+    while (port->mode == PORT_MODE_TRANSPORT) {
+        size_t size;
+        // PACTIMEやガードタイム監視のため、10msでタイムアウトさせる
+        uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(10));
+        TickType_t now = xTaskGetTickCount();
+
+        // 1. エスケープシーケンス判定 (データの有無に関わらず毎回呼ぶ)
+        if (check_escape_with_guard(port, data, size)) {
+            flush_transport_buffer(port); // 残っているデータをパケット化して送信
+            port->mode = PORT_MODE_COMMAND;
+            const char *msg = "\r\nOK\r\nTNC> ";
+            xRingbufferSend(port->to_pc, (uint8_t*)msg, strlen(msg), 0);
+            
+            if (data != NULL) {
+                vRingbufferReturnItem(port->from_pc, (void *)data);
+            }
+            break; // whileループを抜けてメインのディスパッチャに戻る
+        }
+
+        if (data != NULL) {
+            // 2. 受信データがある場合の通常処理
+
+            port->last_rx_tick = now; // 最終受信時刻を更新
+
+            for (size_t i = 0; i < size; i++) {
+                // バッファに格納
                 if (port->trans_len < TNC_PACLEN) {
-                    port->trans_buf[port->trans_len++] = c;
+                    port->trans_buf[port->trans_len++] = data[i];
                 }
 
-                // PACLEN到達チェック
+                // [条件1] PACLEN到達による送信
                 if (port->trans_len >= TNC_PACLEN) {
                     flush_transport_buffer(port);
                 }
             }
             vRingbufferReturnItem(port->from_pc, (void *)data);
         } else {
-            // 受信なし時のPACTIMEチェック
+            // 3. データがない（タイムアウト）場合のPACTIMEチェック
             if (port->trans_len > 0) {
+                // [条件2] PACTIME（無通信時間）経過による送信
                 if ((now - port->last_rx_tick) > pdMS_TO_TICKS(TNC_PACTIME)) {
                     flush_transport_buffer(port);
                 }
@@ -161,6 +229,7 @@ void run_mode_transport(tnc_port_info_t *port) {
         }
     }
 }
+
 
 void run_mode_kiss(tnc_port_info_t *port) {
     kiss_context_t kiss_ctx;
@@ -189,72 +258,93 @@ void run_mode_loopback(tnc_port_info_t *port) {
         uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(100));
 
         if (data != NULL) {
-            // 受信したデータをecho-backするだけでなく、相手ポートのto_pcへ送信も行う
+            // 受信したデータをecho-backする
             xRingbufferSend(port->to_pc, data, size, 0);
-            xRingbufferSend(pc_ports[peer_id].to_pc, data, size, 0);
+            // peerportが自分自身でなければ、peerポートのto_pcへ送信も行う
+            if (peer_id != port->id) {
+                xRingbufferSend(pc_ports[peer_id].to_pc, data, size, 0);
+            }
             // 送信後は受信バッファを返却
             vRingbufferReturnItem(port->from_pc, (void *)data);
         }
     }
 }
 
-void run_mode_uichat(tnc_port_info_t *port) {
-    const char *prompt = "\r\n(UICHAT)> ";
-    const char *exit_msg = "\r\nExiting UICHAT Mode...\r\n";
-    
-    // 入場時にプロンプトを表示
-    xRingbufferSend(port->to_pc, (uint8_t*)prompt, strlen(prompt), 0);
-    
-    port->line_pos = 0;
 
-    while (port->mode == PORT_MODE_UICHAT) {
-        size_t size;
-        uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(100));
+#define GUARD_TIME pdMS_TO_TICKS(1000) // 1000ms
 
-        if (data != NULL) {
-            for (size_t i = 0; i < size; i++) {
-                uint8_t c = data[i];
+/**
+ * ガードタイム付きエスケープシーケンス判定
+ * @return 1: モード脱出確定, 0: 継続
+ */
+static int check_escape_with_guard(tnc_port_info_t *port, const uint8_t *data, size_t size) {
+    TickType_t now = xTaskGetTickCount();
+    TickType_t interval = now - port->last_rx_tick;
 
-                // 1. エスケープ処理 (Ctrl+C でコマンドモードへ)
-                if (c == 0x03) {
-                    port->mode = PORT_MODE_COMMAND;
-                    xRingbufferSend(port->to_pc, (uint8_t*)exit_msg, strlen(exit_msg), 0);
-                    break;
-                }
-
-                // 2. エコーバック (PCの画面に文字を返す)
-                xRingbufferSend(port->to_pc, &c, 1, 0);
-
-                // 3. 改行判定 (CR または LF)
-                if (c == '\r' || c == '\n') {
-                    if (port->line_pos > 0) {
-                        // パケットとして送信バッファへ投入
-                        send_uichat_packet(port, (uint8_t*)port->line_buf, port->line_pos);
-                        
-                        // 送信後に改行とプロンプトを表示
-                        xRingbufferSend(port->to_pc, (uint8_t*)"\r\n(UICHAT)> ", 13, 0);
-                        port->line_pos = 0;
-                    }
-                } else {
-                    // 4. バッファ格納 (BS等の処理は簡易化のため省略)
-                    if (port->line_pos < sizeof(port->line_buf) - 1) {
-                        port->line_buf[port->line_pos++] = c;
-                    }
-                }
-            }
-            vRingbufferReturnItem(port->from_pc, (void *)data);
+    // 1. データを受信した場合の判定
+    if (data != NULL && size > 0) {
+        // 前回の受信から1秒以上経っていれば READY 状態へ
+        if (interval >= GUARD_TIME) {
+            port->esc_state = ESC_STATE_READY;
         }
 
-        // 5. 受信データの確認 (ダミー処理)
-        // 本来は受信キューを監視し、自局宛のUIフレームがあれば to_pc へ送る
-        poll_and_display_rx_packets(port);
+        // READY状態で、かつ届いたデータが正確に "+++" のみであるかチェック
+        if (port->esc_state == ESC_STATE_READY && size == 3 && 
+            data[0] == '+' && data[1] == '+' && data[2] == '+') {
+            port->esc_state = ESC_STATE_DETECTED;
+            // 受信時刻を更新して、ここからさらに1秒待機
+            port->last_rx_tick = now; 
+            return 0;
+        }
+
+        // それ以外のデータが来たら IDLE に戻る（シーケンス失敗）
+        port->esc_state = ESC_STATE_IDLE;
+        port->last_rx_tick = now;
+        return 0;
+    } else {
+        // 2. データを受信していない（タイムアウト時）の判定
+
+        // "+++" 受信後に1秒以上無音が続けば、脱出成功
+        if (port->esc_state == ESC_STATE_DETECTED && interval >= GUARD_TIME) {
+            port->esc_state = ESC_STATE_IDLE; // リセット
+            return 1;
+        }
     }
+
+    return 0;
 }
+
+
 
 void poll_and_display_rx_packets(tnc_port_info_t *port) {
     // 受信キューを監視し、自局宛のUIフレームがあれば to_pc へ送る
     // ここではダミー実装として、実際の受信処理は省略
     // 将来的には、rx_ringbuf などから受信フレームを取り出し、to_pc へ送る処理を実装する
+}
+
+/**
+ * UIフレーム（UICHAT / TRANSPORT）用の共通パケット投入関数
+ */
+void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len) {
+    size_t header_len = sizeof(tnc_meta_header_t);
+    size_t total_len = header_len + len;
+
+    // スタックバッファ
+    uint8_t send_tmp[KISS_MAX_RAW_LEN + 32];
+    if (total_len > sizeof(send_tmp)) return;
+
+    tnc_meta_header_t *meta = (tnc_meta_header_t *)send_tmp;
+    meta->version     = TNC_META_VERSION_1;
+    meta->type        = META_TYPE_DATA_UI; // UIフレーム種別
+    meta->header_len  = (uint16_t)header_len;
+    meta->payload_len = (uint16_t)len;
+    meta->port_id     = (uint8_t)port->id;
+    meta->reserved    = 0;
+
+    memcpy(send_tmp + header_len, payload, len);
+
+    // No-Split リングバッファへ
+    xRingbufferSend(port->send_tx, send_tmp, total_len, pdMS_TO_TICKS(10));
 }
 
 void send_uichat_packet(tnc_port_info_t *port, uint8_t *payload, size_t len) {

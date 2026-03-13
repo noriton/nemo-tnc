@@ -2,7 +2,7 @@
 #include "command_parser.h"
 #include "tx_frame.h"
 #include "tnc_buffer.h"
-#include "tnc_settings.h"
+#include "nvs_if.h"
 #include "ax25.h"
 #include "tinyusb_cdc_acm.h"
 #include "esp_console.h"
@@ -39,15 +39,22 @@ static int cmd_version(int argc, char **argv) {
     return 0;
 }
 
+// UIMODE コマンド (修正版)
+static int cmd_uimode(int argc, char **argv) {
+    cmd_response("\r\nNEMO-TNC v0.1 (esp_console)\r\n");
+    return 0;
+}
+
+
 // MYCALL コマンド (引数があれば設定、なければ表示)
 static int cmd_mycall(int argc, char **argv) {
     if (argc > 1) {
-        if (settings_save_mycall(argv[1]) == ESP_OK) {
+        if (nvs_save_mycall(argv[1]) == ESP_OK) {
             cmd_response("Saved.\r\n");
         }
     } else {
         char call[16] = {0};
-        if (settings_load_mycall(call, sizeof(call)) == ESP_OK) {
+        if (nvs_load_mycall(call, sizeof(call)) == ESP_OK) {
             cmd_response("\r\nMYCALL: %s\r\n", call);
         } else {
             cmd_response("MYCALL not set.\r\n");
@@ -59,7 +66,7 @@ static int cmd_mycall(int argc, char **argv) {
 // TESTTX コマンド (tx_frame経由で送信)
 static int cmd_testtx(int argc, char **argv) {
     char my_call[16] = {0};
-    settings_load_mycall(my_call, sizeof(my_call));
+    nvs_load_mycall(my_call, sizeof(my_call));
     
     ax25_address_t addr = {
         .dest_call = "CQ    ", .dest_ssid = 0,
@@ -85,14 +92,40 @@ static int cmd_testtx(int argc, char **argv) {
         cmd_response("Failed to Queue.\r\n");
     }
 
-    // TESTTXは送信コマンドなので、受信側の「もう一方のポート」へのHEXダンプ出力は
-    // ここではなく rx_frame.c で行うべきだが、今回の要件「出力結果をもう一つのポートに表示」
-    // に従い、ここでも何らかの表示をするか？
-    // いえ、TESTTXは「送信」コマンドであり、実行結果は「キューに入れた」ことです。
+    return 0;
+}
+
+// UISEND コマンド (UIframeを簡易に送信)
+static int cmd_uisend(int argc, char **argv) {
+    char my_call[16] = {0};
+    nvs_load_mycall(my_call, sizeof(my_call));
+    
+    ax25_address_t addr = {
+        .dest_call = "CQ    ", .dest_ssid = 0,
+        .src_call = my_call, .src_ssid = 0
+    };
+
+    uint8_t frame[300];
+    const char *msg = (argc > 1) ? argv[1] : "HELLO";
+    
+    // 平文の表示 (Input Portへフィードバック)
+    char plain_msg[64];
+    int p_len = snprintf(plain_msg, sizeof(plain_msg), "\r\nSending: %s\r\n", msg);
+    // 平文の表示 (Input Portへフィードバック)
+    cmd_response("\r\nSending: %s\r\n", msg);
+
+    size_t len = ax25_build_ui_frame(&addr, (uint8_t *)msg, strlen(msg), frame);
+
+    // echoへエンキュー
+    uint8_t portnum = 0; //暫定
+    if (tx_frame_enqueue(frame, len, portnum) == ESP_OK) {
+        cmd_response("Queued to TX Buffer.\r\n");
+    } else {
+        cmd_response("Failed to Queue.\r\n");
+    }
+
+    // UISENDは送信コマンドなので、実行結果は「キューに入れた」ことです。
     // 「受信した」結果は rx_frame が担当します。
-    // rx_frame は現在 Port 1 固定ですが、ここも pc_write_result 的な動きが必要なら修正要。
-    // しかし rx_frame は非同期タスクなので g_cmd_port を参照できない。
-    // 今回はコマンド応答のクロス表示がメインなので、これで良しとします。
 
     return 0;
 }
@@ -174,6 +207,8 @@ static void register_commands(void) {
         {"VERSION", "Show version", NULL, &cmd_version, NULL},
         {"MYCALL",  "Set/Get callsign", "<call>", &cmd_mycall, NULL},
         {"TESTTX",  "Send test packet", "[message]", &cmd_testtx, NULL},
+        {"UISEND", "Send UI information", "<call>", &cmd_uisend, NULL},
+        {"UIMODE", "Set UI mode", "<mode>", &cmd_uimode, NULL},
     };
 
     for (int i = 0; i < sizeof(cmds) / sizeof(esp_console_cmd_t); i++) {

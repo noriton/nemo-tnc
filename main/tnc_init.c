@@ -18,7 +18,7 @@
 
 #include "tnc_pc_port.h"
 #include "nvs_flash.h"
-#include "tnc_settings.h"
+#include "nvs_if.h"
 #include "rx_frame.h"
 
 char mycall[16] = "N0CALL"; // デフォルトコールサイン
@@ -33,7 +33,7 @@ void tnc_init(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    if (settings_load_mycall(mycall, sizeof(mycall)) == ESP_OK) {
+    if (nvs_load_mycall(mycall, sizeof(mycall)) == ESP_OK) {
         ESP_LOGI("TNC", "********************************");
         ESP_LOGI("TNC", "  NEMO-TNC Starting...         ");
         ESP_LOGI("TNC", "  Callsign: %s                 ", mycall);
