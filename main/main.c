@@ -39,7 +39,7 @@ void app_main(void)
 
     indicator_set_state(TNC_ST_IDLE); // USB接続済み待機状態に設定
 
-    while (1) {
+    for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 

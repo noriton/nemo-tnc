@@ -18,7 +18,7 @@
  * @brief コマンド解析タスク本体
  * コマンド入力として受け取ったデータを処理し、エコーバックやコマンド実行を行います。
  */
-void process_command_input(tnc_pc_port_t *port, uint8_t *data, size_t len);
+void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len);
 
 /**
  * @brief コマンドパーサーの初期化

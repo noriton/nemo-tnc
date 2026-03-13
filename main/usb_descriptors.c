@@ -53,7 +53,7 @@ static const char* const_string_desc[] = {
     "NEMO-TNC-S3a",                // 2: Product
     "SN00001a",                    // 3: Serial
     "TNC-Command",                 // 4: Port 0 Name
-    "TNC-Data-KISS"                // 5: Port 1 Name
+    "TNC-Data"                     // 5: Port 1 Name
 };
 
 // USBポート入力用コールバック (共通化)

@@ -14,7 +14,7 @@ static void rx_frame_task(void *pvParameters) {
     size_t item_size;
     uint8_t *item;
 
-    while (1) {
+    for (;;) {
         // Receive item from ring buffer
         item = (uint8_t *)xRingbufferReceive(tx_ringbuf[0], &item_size, portMAX_DELAY);
 

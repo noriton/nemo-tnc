@@ -12,6 +12,8 @@ idf_component_register(SRCS
     "ax25_utils.c"
     "ax25_fcs.c"
     "tnc_pc_port.c"
+    "frame_metadata.c"
+    "kiss_parser.c"
 INCLUDE_DIRS "."
 PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console
 )

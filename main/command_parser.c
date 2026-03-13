@@ -19,7 +19,7 @@ static const char *TAG = "CMD_PARSER";
 // --- コマンド応答用ヘルパー ---
 static void cmd_response(const char *fmt, ...) {
     // 現在実行中のタスクの TLS からポート情報を取得
-    tnc_pc_port_t *port = (tnc_pc_port_t *)pvTaskGetThreadLocalStoragePointer(NULL, 0);
+    tnc_port_info_t *port = (tnc_port_info_t *)pvTaskGetThreadLocalStoragePointer(NULL, 0);
 
     if (port != NULL) {
         char buf[128];
@@ -29,7 +29,7 @@ static void cmd_response(const char *fmt, ...) {
         va_end(args);
 
         // ポートの送信バッファへ書き込み
-        xRingbufferSend(port->tx_rb, (uint8_t *)buf, strlen(buf), 0);
+        xRingbufferSend(port->to_pc, (uint8_t *)buf, strlen(buf), 0);
     }
 }
 
@@ -77,7 +77,7 @@ static int cmd_testtx(int argc, char **argv) {
 
     size_t len = ax25_build_ui_frame(&addr, (uint8_t *)msg, strlen(msg), frame);
 
-    // TX Frameへエンキュー
+    // echoへエンキュー
     uint8_t portnum = 0; //暫定
     if (tx_frame_enqueue(frame, len, portnum) == ESP_OK) {
         cmd_response("Queued to TX Buffer.\r\n");
@@ -99,7 +99,7 @@ static int cmd_testtx(int argc, char **argv) {
 
 // --- コマンド解析ロジック ---
 
-void process_command_input(tnc_pc_port_t *port, uint8_t *data, size_t len) {
+void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len) {
     if (port == NULL || data == NULL) return;
 
     for (size_t i = 0; i < len; i++) {
@@ -109,7 +109,7 @@ void process_command_input(tnc_pc_port_t *port, uint8_t *data, size_t len) {
 
         if (c == '\r') {
             const char *crlf = "\r\n";
-            xRingbufferSend(port->tx_rb, (uint8_t*)crlf, 2, 0);
+            xRingbufferSend(port->to_pc, (uint8_t*)crlf, 2, 0);
 
             if (port->line_pos > 0) {
                 port->line_buf[port->line_pos] = '\0';
@@ -124,13 +124,13 @@ void process_command_input(tnc_pc_port_t *port, uint8_t *data, size_t len) {
                     xSemaphoreGive(console_mutex);
                 } else {
                     const char *busy = "Busy\r\n";
-                    xRingbufferSend(port->tx_rb, (uint8_t*)busy, strlen(busy), 0);
+                    xRingbufferSend(port->to_pc, (uint8_t*)busy, strlen(busy), 0);
                 }
             }
             // コマンド実行後、バッファをリセットしてプロンプトを表示
             port->line_pos = 0;
             const char *prompt = "TNC> "; // 既に \r\n しているのでここはシンプルに
-            xRingbufferSend(port->tx_rb, (uint8_t*)prompt, strlen(prompt), 0);
+            xRingbufferSend(port->to_pc, (uint8_t*)prompt, strlen(prompt), 0);
         } else {
             // Backspace (0x08) や Delete (0x7F) の対応
             if (c == 0x08 || c == 0x7F) {
@@ -138,14 +138,14 @@ void process_command_input(tnc_pc_port_t *port, uint8_t *data, size_t len) {
                     port->line_pos--;
                     // 画面上の文字を消すエスケープシーケンス "\b \b"
                     const char *bs = "\b \b"; 
-                    xRingbufferSend(port->tx_rb, (uint8_t*)bs, 3, 0);
+                    xRingbufferSend(port->to_pc, (uint8_t*)bs, 3, 0);
                 }
             } else if (c >= 0x20 && c <= 0x7E) {
                 // 表示可能文字のみバッファリング
                 if (port->line_pos < sizeof(port->line_buf) - 1) {
                     port->line_buf[port->line_pos++] = c;
                     // 入力文字をそのままエコーバック
-                    xRingbufferSend(port->tx_rb, &c, 1, 0);
+                    xRingbufferSend(port->to_pc, &c, 1, 0);
                 }
             }
         }

@@ -1,30 +1,54 @@
+#include <string.h>
 #include "tnc_pc_port.h"
 #include "tnc_buffer.h"
 #include "command_parser.h"
 #include "tinyusb_cdc_acm.h"
 #include "esp_log.h"
-#include <string.h>
+#include "frame_metadata.h"
+#include "kiss_parser.h" // メタデータ定義などを参照
 
-
+void send_uichat_packet(tnc_port_info_t *port, uint8_t *payload, size_t len);
+void poll_and_display_rx_packets(tnc_port_info_t *port);
 void pc_port_task(void *pvParameters);
 
-tnc_pc_port_t pc_ports[2];
+#define MAX_PORTS 2
+tnc_port_info_t pc_ports[MAX_PORTS];
+int master_comand_port = 0;
 
 void tnc_pc_ports_init(void) {
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < MAX_PORTS; i++) {
         pc_ports[i].id = i;
-        pc_ports[i].mode = PORT_MODE_COMMAND; // 初期状態はどちらもコマンドモード
-        
-        // RXバッファは USB受信バッファ (usb_from_pc) を参照する形にする
-        // これで usb_descriptors.c が usb_from_pc に入れたデータをここで吸い出せる
-        pc_ports[i].rx_rb = usb_from_pc[i];
-        
-        // TXバッファは独自に作成 (あるいはこれも一本化可能だが、ひとまず既存維持)
-        if (pc_ports[i].tx_rb == NULL) {
-             pc_ports[i].tx_rb = xRingbufferCreate(2048, RINGBUF_TYPE_NOSPLIT);
+//        pc_ports[i].mode = PORT_MODE_COMMAND; // 初期状態はどちらもコマンドモード
+
+        if (i == master_comand_port) {
+            pc_ports[i].mode = PORT_MODE_COMMAND; 
+            // マスターコマンドポートは起動時（初期化時）コマンドモード
+        } else {
+            pc_ports[i].mode = PORT_MODE_COMMAND; 
+            // その他のポートは前回保存されたモードで起動（だけどとりあえずコマンドモード）
         }
+
+        // ループバックや相互接続のペアリング設定
+        if (i == MAX_PORTS - 1 && (i % 2 == 0)) {
+            // 1. 自分が最後の要素、かつ、ペアになる相手（i+1）が範囲外になる場合
+            pc_ports[i].peer_id = i; // ループバック
+        } else {
+            // 2. それ以外はペアになる相手を指定
+            pc_ports[i].peer_id = (i % 2 == 0) ? i + 1 : i - 1;
+        }
+
+        // 受信バッファは ひとまずUSB受信バッファ (usb_from_pc) を参照する
+        // これで usb_descriptors.c が usb_from_pc に入れたデータをここで吸い出せる
+        // 送信バッファは to_pc を参照する形で統一 (usb_to_pc と同じものを指す)
+        // 将来的にはモードによっては別のIF（シリアルなど）を使う可能性もあるため、
+        // ここで切り替えられるようにする
+    
+        pc_ports[i].from_pc = usb_from_pc[i];
+        pc_ports[i].to_pc = usb_to_pc[i]; // PCへの送信(戻り）用リングバッファ
+        
         pc_ports[i].line_pos = 0;
 
+        kiss_init(&(pc_ports[i].kiss_ctx)); // KISSパーサのコンテキスト初期化
         // タスク起動
         char task_name[16];
         snprintf(task_name, sizeof(task_name), "pc_port_%d", i);
@@ -32,115 +56,263 @@ void tnc_pc_ports_init(void) {
     }
 }
 
-static void flush_transport_buffer(tnc_pc_port_t *port) {
-    if (port->trans_len > 0) {
-        
-        // ★本来はここで AX.25 UIフレーム生成関数などを呼ぶ場所です
-        // 例: ax25_send_ui_frame(port->trans_buf, port->trans_len);
-        
-        // --- [デバッグ用] 送信したつもりでPCへ通知 ---
-        // 実際にパケットになったことが分かるようにフォーマットしてPCへ返す
-        char debug_msg[64];
-        snprintf(debug_msg, sizeof(debug_msg), "\r\n[TX Packet: %d bytes]\r\n", port->trans_len);
-        xRingbufferSend(port->tx_rb, (uint8_t*)debug_msg, strlen(debug_msg), 0);
-        
-        // データ本体もエコーバックしてみる（確認用）
-        xRingbufferSend(port->tx_rb, port->trans_buf, port->trans_len, 0);
-        
-        // -----------------------------------------------------
 
-        // 送信完了したのでバッファをクリア
-        port->trans_len = 0;
+
+/**
+ * トランスペアレントモードのバッファをフラッシュし、
+ * メタデータを付与して送信キュー(No-Split RB)へ投入する
+ */
+static void flush_transport_buffer(tnc_port_info_t *port) {
+    if (port->trans_len == 0) {
+        return;
+    }
+
+    // 1. 必要サイズの計算
+    size_t header_len = sizeof(tnc_meta_header_t);
+    size_t payload_len = port->trans_len;
+    size_t total_len = header_len + payload_len;
+
+    // 2. 一時送信バッファの確保 (スタック利用)
+    // TNC_PACLEN + ヘッダサイズ (約512+32バイト)
+    uint8_t send_tmp[TNC_PACLEN + 64];
+
+    if (total_len <= sizeof(send_tmp)) {
+        tnc_meta_header_t *meta = (tnc_meta_header_t *)send_tmp;
+
+        // 3. メタデータヘッダの構築
+        meta->version     = TNC_META_VERSION_1;
+        meta->type        = META_TYPE_DATA_UI; // トランスペアレントはUIフレーム扱い
+        meta->header_len  = (uint16_t)header_len;
+        meta->payload_len = (uint16_t)payload_len;
+        meta->port_id     = (uint8_t)port->id;
+        meta->reserved    = 0;
+
+        // 4. ペイロードをヘッダの直後にコピー
+        memcpy(send_tmp + header_len, port->trans_buf, payload_len);
+
+        // 5. No-Split リングバッファ (ax25_packet_queue) へ投入
+        // タイムアウトを設けて、バッファが一時的にいっぱいの時でも少し待機させる
+        BaseType_t res = xRingbufferSend(port->send_tx, send_tmp, total_len, pdMS_TO_TICKS(20));
+
+        if (res != pdTRUE) {
+            // バッファフル時のエラー処理 (必要に応じてログ出力や統計カウンタ加算)
+            // ESP_LOGW("TNC", "TX Queue Full - Packet dropped");
+        }
+    }
+
+    // 6. 送信完了(または破棄)したのでバッファをクリア
+    port->trans_len = 0;
+}
+
+void run_mode_command(tnc_port_info_t *port) {
+    while (port->mode == PORT_MODE_COMMAND) {
+        size_t size;
+        uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(100));
+
+        if (data != NULL) {
+            process_command_input(port, data, size);
+            vRingbufferReturnItem(port->from_pc, (void *)data);
+        }
     }
 }
 
+void run_mode_transport(tnc_port_info_t *port) {
+    port->trans_len = 0;
+    port->last_rx_tick = xTaskGetTickCount();
+
+    while (port->mode == PORT_MODE_TRANSPORT) {
+        size_t size;
+        uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(10));
+        TickType_t now = xTaskGetTickCount();
+
+        if (data != NULL) {
+            port->last_rx_tick = now;
+            for (int i = 0; i < size; i++) {
+                uint8_t c = data[i];
+
+                // エスケープ処理 (Ctrl+C = 0x03)
+                if (c == 0x03) {
+                    flush_transport_buffer(port);
+                    port->mode = PORT_MODE_COMMAND;
+                    const char *msg = "\r\nCommand Mode\r\nTNC> ";
+                    xRingbufferSend(port->to_pc, (uint8_t*)msg, strlen(msg), 0);
+                    port->line_pos = 0;
+                    break;
+                }
+
+                // バッファリング
+                if (port->trans_len < TNC_PACLEN) {
+                    port->trans_buf[port->trans_len++] = c;
+                }
+
+                // PACLEN到達チェック
+                if (port->trans_len >= TNC_PACLEN) {
+                    flush_transport_buffer(port);
+                }
+            }
+            vRingbufferReturnItem(port->from_pc, (void *)data);
+        } else {
+            // 受信なし時のPACTIMEチェック
+            if (port->trans_len > 0) {
+                if ((now - port->last_rx_tick) > pdMS_TO_TICKS(TNC_PACTIME)) {
+                    flush_transport_buffer(port);
+                }
+            }
+        }
+    }
+}
+
+void run_mode_kiss(tnc_port_info_t *port) {
+    kiss_context_t kiss_ctx;
+    kiss_init(&kiss_ctx);
+
+    while (port->mode == PORT_MODE_KISS) {
+        // KISSストリームを受信して解析、AX.25送信処理へ
+        // KISSはバイトストリームなので、受信データをそのまま kiss_process_stream に渡す
+        // KISSモードからの離脱はマスターポートのコマンドコンソールから行う。
+        size_t size;
+        uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(100));
+
+        if (data != NULL) {
+            // KISSストリームを解析してAX.25送信処理へ
+            kiss_process_stream(&kiss_ctx, data, size, port->id, port->send_tx);
+            vRingbufferReturnItem(port->from_pc, (void *)data);
+        }
+    }
+}
+
+void run_mode_loopback(tnc_port_info_t *port) {
+    int peer_id = (port->id == 0) ? 1 : 0;
+
+    while (port->mode == PORT_MODE_LOOPBACK) {
+        size_t size;
+        uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(100));
+
+        if (data != NULL) {
+            // 受信したデータをecho-backするだけでなく、相手ポートのto_pcへ送信も行う
+            xRingbufferSend(port->to_pc, data, size, 0);
+            xRingbufferSend(pc_ports[peer_id].to_pc, data, size, 0);
+            // 送信後は受信バッファを返却
+            vRingbufferReturnItem(port->from_pc, (void *)data);
+        }
+    }
+}
+
+void run_mode_uichat(tnc_port_info_t *port) {
+    const char *prompt = "\r\n(UICHAT)> ";
+    const char *exit_msg = "\r\nExiting UICHAT Mode...\r\n";
+    
+    // 入場時にプロンプトを表示
+    xRingbufferSend(port->to_pc, (uint8_t*)prompt, strlen(prompt), 0);
+    
+    port->line_pos = 0;
+
+    while (port->mode == PORT_MODE_UICHAT) {
+        size_t size;
+        uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(100));
+
+        if (data != NULL) {
+            for (size_t i = 0; i < size; i++) {
+                uint8_t c = data[i];
+
+                // 1. エスケープ処理 (Ctrl+C でコマンドモードへ)
+                if (c == 0x03) {
+                    port->mode = PORT_MODE_COMMAND;
+                    xRingbufferSend(port->to_pc, (uint8_t*)exit_msg, strlen(exit_msg), 0);
+                    break;
+                }
+
+                // 2. エコーバック (PCの画面に文字を返す)
+                xRingbufferSend(port->to_pc, &c, 1, 0);
+
+                // 3. 改行判定 (CR または LF)
+                if (c == '\r' || c == '\n') {
+                    if (port->line_pos > 0) {
+                        // パケットとして送信バッファへ投入
+                        send_uichat_packet(port, (uint8_t*)port->line_buf, port->line_pos);
+                        
+                        // 送信後に改行とプロンプトを表示
+                        xRingbufferSend(port->to_pc, (uint8_t*)"\r\n(UICHAT)> ", 13, 0);
+                        port->line_pos = 0;
+                    }
+                } else {
+                    // 4. バッファ格納 (BS等の処理は簡易化のため省略)
+                    if (port->line_pos < sizeof(port->line_buf) - 1) {
+                        port->line_buf[port->line_pos++] = c;
+                    }
+                }
+            }
+            vRingbufferReturnItem(port->from_pc, (void *)data);
+        }
+
+        // 5. 受信データの確認 (ダミー処理)
+        // 本来は受信キューを監視し、自局宛のUIフレームがあれば to_pc へ送る
+        poll_and_display_rx_packets(port);
+    }
+}
+
+void poll_and_display_rx_packets(tnc_port_info_t *port) {
+    // 受信キューを監視し、自局宛のUIフレームがあれば to_pc へ送る
+    // ここではダミー実装として、実際の受信処理は省略
+    // 将来的には、rx_ringbuf などから受信フレームを取り出し、to_pc へ送る処理を実装する
+}
+
+void send_uichat_packet(tnc_port_info_t *port, uint8_t *payload, size_t len) {
+    size_t total_len = sizeof(tnc_meta_header_t) + len;
+    
+    // 送信用バッファ（スタックに確保）
+    uint8_t tmp_buf[512]; 
+    if (total_len > sizeof(tmp_buf)) return;
+
+    tnc_meta_header_t *meta = (tnc_meta_header_t *)tmp_buf;
+    meta->version = TNC_META_VERSION_1;
+    meta->type = META_TYPE_DATA_UI; // UIフレームとして送信することを指定
+    meta->header_len = sizeof(tnc_meta_header_t);
+    meta->payload_len = len;
+    meta->port_id = port->id;
+
+    // データ本体をコピー
+    memcpy(tmp_buf + sizeof(tnc_meta_header_t), payload, len);
+
+    // 送信タスクへ渡すリングバッファ (ax25_packet_queue) へ投入
+    // ※ send_tx は No-Split モードで作成されていること
+    xRingbufferSend(port->send_tx, tmp_buf, total_len, 0);
+}
+
 void pc_port_task(void *pvParameters) {
-    tnc_pc_port_t *port = (tnc_pc_port_t *)pvParameters;
+    tnc_port_info_t *port = (tnc_port_info_t *)pvParameters;
 
     // 現在のタスクのTLSにポート情報を保存 (Index 0)
     vTaskSetThreadLocalStoragePointer(NULL, 0, port);
 
-    port->trans_len = 0;
-    port->last_rx_tick = xTaskGetTickCount();
+    for (;;) {
+        switch (port->mode) {
+            case PORT_MODE_COMMAND:
+                run_mode_command(port);
+                break;
 
-    while (1) {
-        size_t size;
-        uint8_t *data = (uint8_t *)xRingbufferReceive(port->rx_rb, &size, pdMS_TO_TICKS(10));
-        
-        // トランスペアレントモード用のタイムアウト処理用
-        TickType_t now = xTaskGetTickCount();
+            case PORT_MODE_TRANSPORT:
+                run_mode_transport(port);
+                break;
 
-        if (data != NULL) {
-            port->last_rx_tick = now; // 最終受信時刻を更新
-            // 一括処理へ変更
-            if (port->mode == PORT_MODE_COMMAND) {
-                process_command_input(port, data, size);
-            } else if (port->mode == PORT_MODE_UICHAT) {
-                // ToDo 7: UIチャットモード処理
-                // 改行文字で区切られた文字列を生フレームとして送信 
-                // モードからエスケープする処理
-                // if (data[i] == ?) { //  +++ もしくは^C^C^C
-                //     port->mode = PORT_MODE_COMMAND;
-                // }
-            } else if (port->mode == PORT_MODE_TRANSPORT) {
-                // ToDo 6: トランスポートモード処理
-                for (int i = 0; i < size; i++) {
-                    uint8_t c = data[i];
+            case PORT_MODE_KISS:
+                run_mode_kiss(port);
+                break;
 
-                    // トランスポートモードからエスケープする処理
-                    // if (data[i] == ?) { //  最終的には+++ もしくは^C^C^C
-                    //     port->mode = PORT_MODE_COMMAND;
-                    // }
+            case PORT_MODE_LOOPBACK:
+                run_mode_loopback(port);
+                break;
 
-                    // エスケープ処理 (Ctrl+C = 0x03 でコマンドモードへ戻る)
-                    if (c == 0x03) {
-                        flush_transport_buffer(port); // 残っているデータを吐き出す
-                        
-                        port->mode = PORT_MODE_COMMAND;
-                        const char *msg = "\r\nCommand Mode\r\nTNC> ";
-                        xRingbufferSend(port->tx_rb, (uint8_t*)msg, strlen(msg), 0);
-                        
-                        // バッファリセット
-                        port->line_pos = 0; 
-                        break; 
-                    }
-
-                    // バッファに格納
-                    if (port->trans_len < TNC_PACLEN) {
-                        port->trans_buf[port->trans_len++] = c;
-                    }
-
-                    // [条件1: PACLEN到達] 
-                    // バッファがいっぱいになったら即送信
-                    if (port->trans_len >= TNC_PACLEN) {
-                        flush_transport_buffer(port);
-                    } else if (port->trans_len > 0) {
-                    // [条件2: PACTIME経過]
-                    // 最後のデータ受信から一定時間(TNC_PACTIME)経過したら送信
-                        if ((now - port->last_rx_tick) > pdMS_TO_TICKS(TNC_PACTIME)) {
-                            flush_transport_buffer(port);
-                        }
-                    }
-                }
-            } else if (port->mode == PORT_MODE_KISS) {
-                // ToDo 5: KISSモード処理
-                // main command port ではこのモードにならない。
-
-            } else if (port->mode == PORT_MODE_TURNBACK) {
-                // 同一ポートのtoPCに分割して折り返し
-                // トランスペアレントモードからエスケープする処理
-                // if (data[i] == ?) { //  +++ もしくは^C^C^C
-                //     port->mode = PORT_MODE_COMMAND;
-                // }
-                xRingbufferSend(port->tx_rb, data, size, 0);
-            } else if (port->mode == PORT_MODE_BRIDGE) {
-                // 別のポートへスルー
-                int peer_id = (port->id == 0) ? 1 : 0;
-                xRingbufferSend(pc_ports[peer_id].tx_rb, data, size, 0);
-            } else {
-
-            }
-            vRingbufferReturnItem(port->rx_rb, (void *)data);
+            case PORT_MODE_UICHAT:
+                run_mode_uichat(port);
+                break;
+            
+            default:
+                // 未実装のモードは強制的にコマンドモードへ
+                port->mode = PORT_MODE_COMMAND;
+                vTaskDelay(pdMS_TO_TICKS(10));
+                break;
         }
     }
 }
+                                                                                                                                                                 
