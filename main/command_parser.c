@@ -60,6 +60,54 @@ extern tnc_port_info_t pc_ports[];
 
 #define MYCALL_DEFAULT "N0CALL-0"
 
+/*
+ * MYCALL の set 処理共通ヘルパー
+ *   callsign_arg : コールサイン文字列（正規化・バリデーション前）
+ *   slot_arg     : スロット指定文字列（NULL または数字文字列 または "-"）
+ */
+static int mycall_do_set(tnc_port_info_t *port, const char *callsign_arg, const char *slot_arg)
+{
+    char callsign_buf[CALLSIGN_BUFSIZE];
+    strncpy(callsign_buf, callsign_arg, sizeof(callsign_buf) - 1);
+    callsign_buf[sizeof(callsign_buf) - 1] = '\0';
+    callsign_normalize(callsign_buf);
+    if (!callsign_validate(callsign_buf)) {
+        cmd_response("Error: Invalid callsign: %s\r\n", callsign_arg);
+        return 1;
+    }
+
+    int slot;
+    if (slot_arg == NULL) {
+        slot = port->mycall_idx;
+    } else if (strcmp(slot_arg, "-") == 0) {
+        slot = -1;
+        for (int i = 0; i < MAX_MYCALL_LIST; i++) {
+            if (strcmp(mycall_list[i], MYCALL_DEFAULT) == 0) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            cmd_response("Error: No empty slot available.\r\n");
+            return 1;
+        }
+        port->mycall_idx = slot;
+        nvs_save_port_mycall_idx(port->id, slot);
+    } else {
+        slot = atoi(slot_arg);
+        if (slot < 0 || slot >= MAX_MYCALL_LIST) {
+            cmd_response("Error: Slot must be 0-%d.\r\n", MAX_MYCALL_LIST - 1);
+            return 1;
+        }
+    }
+
+    strncpy(mycall_list[slot], callsign_buf, sizeof(mycall_list[slot]) - 1);
+    mycall_list[slot][sizeof(mycall_list[slot]) - 1] = '\0';
+    nvs_save_mycall_list_item(slot, mycall_list[slot]);
+    cmd_response("Saved [%d]: %s\r\n", slot, mycall_list[slot]);
+    return 0;
+}
+
 // MYCALL コマンド (サブコマンド: list, set, use, del)
 static int cmd_mycall(int argc, char **argv)
 {
@@ -91,57 +139,7 @@ static int cmd_mycall(int argc, char **argv)
             cmd_response("Usage: mycall set <CALLSIGN> [0-7|-]\r\n");
             return 1;
         }
-
-        /* 正規化（大文字化）してバリデーション */
-        char callsign_buf[CALLSIGN_BUFSIZE];
-        strncpy(callsign_buf, argv[2], sizeof(callsign_buf) - 1);
-        callsign_buf[sizeof(callsign_buf) - 1] = '\0';
-        callsign_normalize(callsign_buf);
-        if (!callsign_validate(callsign_buf)) {
-            cmd_response("Error: Invalid callsign: %s\r\n", argv[2]);
-            return 1;
-        }
-        const char *callsign = callsign_buf;
-        int slot;
-
-        if (argc >= 4) {
-            if (strcmp(argv[3], "-") == 0) {
-                // 空き枠を検索
-                slot = -1;
-                for (int i = 0; i < MAX_MYCALL_LIST; i++) {
-                    if (strcmp(mycall_list[i], MYCALL_DEFAULT) == 0) {
-                        slot = i;
-                        break;
-                    }
-                }
-                if (slot < 0) {
-                    cmd_response("Error: No empty slot available.\r\n");
-                    return 1;
-                }
-            } else {
-                slot = atoi(argv[3]);
-                if (slot < 0 || slot >= MAX_MYCALL_LIST) {
-                    cmd_response("Error: Slot must be 0-%d.\r\n", MAX_MYCALL_LIST - 1);
-                    return 1;
-                }
-            }
-        } else {
-            // 番号省略: 現在のポートの枠に上書き
-            slot = port->mycall_idx;
-        }
-
-        strncpy(mycall_list[slot], callsign, sizeof(mycall_list[slot]) - 1);
-        mycall_list[slot][sizeof(mycall_list[slot]) - 1] = '\0';
-        nvs_save_mycall_list_item(slot, mycall_list[slot]);
-
-        // "-" 指定時はポートのインデックスも更新
-        if (argc >= 4 && strcmp(argv[3], "-") == 0) {
-            port->mycall_idx = slot;
-            nvs_save_port_mycall_idx(port->id, slot);
-        }
-
-        cmd_response("Saved [%d]: %s\r\n", slot, mycall_list[slot]);
-        return 0;
+        return mycall_do_set(port, argv[2], argc >= 4 ? argv[3] : NULL);
     }
 
     // --- use サブコマンド ---
@@ -178,6 +176,17 @@ static int cmd_mycall(int argc, char **argv)
         nvs_save_mycall_list_item(slot, mycall_list[slot]);
         cmd_response("Deleted [%d]\r\n", slot);
         return 0;
+    }
+
+    // --- 暗黙のset: argv[1] が有効なコールサインならsetとして動作 ---
+    {
+        char tmp[CALLSIGN_BUFSIZE];
+        strncpy(tmp, argv[1], sizeof(tmp) - 1);
+        tmp[sizeof(tmp) - 1] = '\0';
+        callsign_normalize(tmp);
+        if (callsign_validate(tmp)) {
+            return mycall_do_set(port, argv[1], argc >= 3 ? argv[2] : NULL);
+        }
     }
 
     cmd_response("Unknown subcommand: %s\r\n", argv[1]);
