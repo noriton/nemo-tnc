@@ -6,8 +6,9 @@
 /**
  * 初期化
  */
-void kiss_init(kiss_context_t *ctx) {
-        // これでkiss_context_tのサイズ分のメモリが確保される
+void kiss_init(kiss_context_t *ctx)
+{
+    // これでkiss_context_tのサイズ分のメモリが確保される
     ctx->idx = 0;
     ctx->escape_mode = 0;
     ctx->in_frame = 0;
@@ -17,7 +18,8 @@ void kiss_init(kiss_context_t *ctx) {
 /**
  * ストリーム解析とパケット送出
  */
-void kiss_process_stream(kiss_context_t *ctx, const uint8_t *data, size_t len, int port_id, RingbufHandle_t target_rb) {
+void kiss_process_stream(kiss_context_t *ctx, const uint8_t *data, size_t len, int port_id, RingbufHandle_t target_rb)
+{
     for (size_t i = 0; i < len; i++) {
         uint8_t b = data[i];
 

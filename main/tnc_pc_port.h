@@ -49,8 +49,6 @@ extern const mode_info_t tnc_mode_table[];
 
 
 
-
-
 typedef enum escape_state {
     ESC_STATE_IDLE,    // 無音待ち（1秒以上経過を待っている）
     ESC_STATE_READY,   // 無音確認済み（'+++' を受け入れ可能）

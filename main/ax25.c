@@ -1,7 +1,8 @@
 #include <string.h>
 #include "ax25.h"
 
-size_t ax25_build_ui_frame(const ax25_address_t *addr, const uint8_t *info, size_t info_len, uint8_t *out_buf) {
+size_t ax25_build_ui_frame(const ax25_address_t *addr, const uint8_t *info, size_t info_len, uint8_t *out_buf)
+{
     size_t pos = 0;
 
     // 1. 開始フラグ (無線機に送る直前に付与する場合もあるが、ここでは含める)
@@ -45,7 +46,8 @@ size_t ax25_build_ui_frame(const ax25_address_t *addr, const uint8_t *info, size
     return pos; // 総パケットサイズ
 }
 
-int ax25_decode_ui_info(const uint8_t *frame, size_t frame_len, char *out_info, size_t max_info_len) {
+int ax25_decode_ui_info(const uint8_t *frame, size_t frame_len, char *out_info, size_t max_info_len)
+{
     // 最小サイズチェック (宛先7 + 送信元7 + Control1 + PID1 = 16バイト)
     if (frame_len < 16) return -1;
 

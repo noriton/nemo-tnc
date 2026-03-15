@@ -43,7 +43,8 @@ static const uint16_t crc16_table[256] = {
 /**
  * @brief AX.25 FCS (CRC-16-CCITT) calculation
  */
-uint16_t ax25_fcs_calculate(const uint8_t *data, size_t len) {
+uint16_t ax25_fcs_calculate(const uint8_t *data, size_t len)
+{
     uint16_t fcs = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
         fcs = (fcs >> 8) ^ crc16_table[(fcs ^ data[i]) & 0xFF];

@@ -10,7 +10,8 @@
  * @param ssid SSID (0-15)
  * @param is_last アドレスフィールドの最後かどうか（最後なら1にする）
  */
-void encode_callsign(uint8_t *out_buf, const char *callsign, uint8_t ssid, bool is_last) {
+void encode_callsign(uint8_t *out_buf, const char *callsign, uint8_t ssid, bool is_last)
+{
     int i;
     int len = strlen(callsign);
 

@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 // TNCの状態定義
-typedef enum {
+typedef enum tnc_state {
     TNC_ST_BOOT,       // 起動中
     TNC_ST_IDLE,       // 待機中（USB接続済み）
     TNC_ST_TX,         // 送信中

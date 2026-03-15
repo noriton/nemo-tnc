@@ -2,7 +2,8 @@
 #include "frame_metadata.h"
 #include "tnc_pc_port.h"
 
-size_t enqueue_packet_to_tx(uint8_t *buffer, uint8_t *payload, size_t payload_size) {
+size_t enqueue_packet_to_tx(uint8_t *buffer, uint8_t *payload, size_t payload_size)
+{
     // 1. ヘッダとペイロードを合わせた全体のサイズを計算
     size_t total_len = sizeof(tnc_meta_header_t) + payload_size;
     

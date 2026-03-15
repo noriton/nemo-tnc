@@ -59,7 +59,8 @@ static const char* const_string_desc[] = {
 };
 
 // USBポート入力用コールバック (共通化)
-void usb_port_rx_callback(int itf, cdcacm_event_t *event) {
+void usb_port_rx_callback(int itf, cdcacm_event_t *event)
+{
     uint8_t buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE];
     size_t rx_size = 0;
 
@@ -133,6 +134,4 @@ void usb_init(void)
     ESP_ERROR_CHECK(tinyusb_cdcacm_init(&acm_cfg_1));
 
     ESP_LOGI(TAG, "USB Dual CDC installation complete.");
-
 }
-

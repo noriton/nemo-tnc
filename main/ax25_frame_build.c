@@ -2,7 +2,8 @@
 #include "tnc_pc_port.h"
 
 
-void ax25_tx_task(void *pvParameters) {
+void ax25_tx_task(void *pvParameters)
+{
     size_t item_size;
     uint8_t *item_ptr;
 

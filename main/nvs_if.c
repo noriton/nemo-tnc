@@ -20,7 +20,8 @@ esp_err_t nvs_save_mycall(const char* callsign)
 
 #define UNUSED
 #ifndef UNUSED
-esp_err_t nvs_save_mycall(const char* callsign) {
+esp_err_t nvs_save_mycall(const char* callsign)
+{
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
     if (err != ESP_OK) return err;
@@ -49,7 +50,8 @@ esp_err_t nvs_load_mycall(char* buf, size_t max_len)
 
 #define UNUSED
 #ifndef UNUSED
-esp_err_t nvs_load_mycall(char* buf, size_t max_len) {
+esp_err_t nvs_load_mycall(char* buf, size_t max_len)
+{
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &my_handle);
     if (err != ESP_OK) return err;
@@ -138,7 +140,8 @@ esp_err_t nvs_load_port_mycall_idx(int port_id, int *idx, int default_idx)
     return ESP_OK;
 }
 
-esp_err_t nvs_save_port_mode(int port_id, int portmode) {
+esp_err_t nvs_save_port_mode(int port_id, int portmode)
+{
     const char *s = NULL;
     
     // 数値定数に対応する識別文字列をテーブルから探す
@@ -172,7 +175,8 @@ esp_err_t nvs_save_port_mode(int port_id, int portmode) {
     return err;
 }
 
-esp_err_t nvs_load_port_mode(int *portmode, int port_id, int default_mode) {
+esp_err_t nvs_load_port_mode(int *portmode, int port_id, int default_mode)
+{
     *portmode = default_mode;
     nvs_handle_t my_handle;
     

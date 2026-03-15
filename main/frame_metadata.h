@@ -8,7 +8,7 @@
 #define TNC_META_VERSION_1 0x01
 
 // パケットの種別
-typedef enum tnc_meta_type{
+typedef enum tnc_meta_type {
     META_TYPE_DATA_KISS,     // KISS由来のデータ（AX.25フレーム）
     META_TYPE_DATA_UI,       // トランスペアレント由来のデータ（ペイロードのみ）
     META_TYPE_CTRL_CMD       // 制御コマンド（設定変更など）

@@ -6,7 +6,8 @@
 
 static const char *TAG = "TX_FRAME";
 
-esp_err_t tx_frame_enqueue(const uint8_t *frame, size_t len,uint8_t ifp) {
+esp_err_t tx_frame_enqueue(const uint8_t *frame, size_t len, uint8_t ifp)
+{
     if (tx_ringbuf == NULL) {
         ESP_LOGE(TAG, "TX Ringbuffer not initialized");
         return ESP_FAIL;

@@ -8,7 +8,8 @@ RingbufHandle_t rx_ringbuf[2];
 RingbufHandle_t tx_ringbuf[2];
 
 
-void tnc_buffer_init(void) {
+void tnc_buffer_init(void)
+{
     // 2048バイトの「バイトバッファ」を作成
     // RINGBUF_TYPE_BYTEBUF は、任意の長さのバイナリを流し込むのに適しています
 
@@ -29,5 +30,4 @@ void tnc_buffer_init(void) {
         || tx_ringbuf[0] == NULL || tx_ringbuf[1] == NULL) {
         ESP_LOGE("BUFFER", "リングバッファの作成に失敗しました");
     }
-
 }

@@ -19,7 +19,8 @@ static int64_t last_rx_time = 0; // 最後にRXステートになった時刻(�
 static TaskHandle_t indicator_task_handle = NULL;
 
 // 状態を変更する関数
-void indicator_set_state(tnc_state_t new_state) {
+void indicator_set_state(tnc_state_t new_state)
+{
     current_state = new_state;
     if (new_state == TNC_ST_RX) {
         last_rx_time = esp_timer_get_time(); // 現在時刻（μs）を記録
@@ -27,8 +28,9 @@ void indicator_set_state(tnc_state_t new_state) {
 }
 
 // LEDを制御する独立したタスク
-static void indicator_task(void *pvParameters) {
-    while (1) {
+static void indicator_task(void *pvParameters)
+{
+    for (;;) {
         switch (current_state) {
             case TNC_ST_BOOT:
                 // 高速点滅で「準備中」感
@@ -86,7 +88,8 @@ static void indicator_task(void *pvParameters) {
     }
 }
 
-void indicator_init(void) {
+void indicator_init(void)
+{
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_STRIP_BLINK_GPIO,
         .max_leds = LED_STRIP_MAX_LEDS,
@@ -109,7 +112,8 @@ void indicator_init(void) {
 }
 
 
-static void indicator_set_color(uint8_t r, uint8_t g, uint8_t b) {
+static void indicator_set_color(uint8_t r, uint8_t g, uint8_t b)
+{
     if (led_strip) {
         led_strip_set_pixel(led_strip, 0, r, g, b);
         led_strip_refresh(led_strip);

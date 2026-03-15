@@ -10,7 +10,8 @@
 
 static const char *TAG = "RX_FRAME";
 
-static void rx_frame_task(void *pvParameters) {
+static void rx_frame_task(void *pvParameters)
+{
     size_t item_size;
     uint8_t *item;
 
@@ -64,7 +65,8 @@ static void rx_frame_task(void *pvParameters) {
     }
 }
 
-void rx_frame_init(void) {
+void rx_frame_init(void)
+{
     xTaskCreate(rx_frame_task, "rx_frame_task", 4096, NULL, 5, NULL);
     ESP_LOGI(TAG, "RX Frame task started");
 }

@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 // アドレス情報のまとめ役
-typedef struct {
+typedef struct ax25_address {
     const char *dest_call; // 送信先 (例: "APRS  ")
     uint8_t dest_ssid;
     const char *src_call;  // 送信元 (例: 自分のコールサイン)
