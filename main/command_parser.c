@@ -7,6 +7,7 @@
 #include "indicator.h"
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 
 #include "frame_metadata.h" // メタデータ構造体定義を使用
@@ -74,7 +75,7 @@ static int cmd_mycall(int argc, char **argv)
     }
 
     // --- list サブコマンド ---
-    if (strcmp(argv[1], "list") == 0) {
+    if (strcasecmp(argv[1],"list") == 0) {
         cmd_response("\r\nPort %d -> slot %d (%s)\r\n", port->id, port->mycall_idx,
                      mycall_list[port->mycall_idx]);
         for (int i = 0; i < MAX_MYCALL_LIST; i++) {
@@ -84,7 +85,7 @@ static int cmd_mycall(int argc, char **argv)
     }
 
     // --- set サブコマンド ---
-    if (strcmp(argv[1], "set") == 0) {
+    if (strcasecmp(argv[1],"set") == 0) {
         if (argc < 3) {
             cmd_response("Usage: mycall set <CALLSIGN> [0-7|-]\r\n");
             return 1;
@@ -133,7 +134,7 @@ static int cmd_mycall(int argc, char **argv)
     }
 
     // --- use サブコマンド ---
-    if (strcmp(argv[1], "use") == 0) {
+    if (strcasecmp(argv[1],"use") == 0) {
         if (argc < 3) {
             cmd_response("Usage: mycall use <0-7>\r\n");
             return 1;
@@ -151,7 +152,7 @@ static int cmd_mycall(int argc, char **argv)
     }
 
     // --- del サブコマンド ---
-    if (strcmp(argv[1], "del") == 0) {
+    if (strcasecmp(argv[1],"del") == 0) {
         if (argc < 3) {
             cmd_response("Usage: mycall del <0-7>\r\n");
             return 1;
@@ -179,10 +180,10 @@ static int cmd_led(int argc, char **argv)
         cmd_response("Usage: led <on|off>\r\n");
         return 1;
     }
-    if (strcmp(argv[1], "off") == 0) {
+    if (strcasecmp(argv[1],"off") == 0) {
         indicator_set_forced_off(1);
         cmd_response("LED off\r\n");
-    } else if (strcmp(argv[1], "on") == 0) {
+    } else if (strcasecmp(argv[1],"on") == 0) {
         indicator_set_forced_off(0);
         cmd_response("LED on\r\n");
     } else {
@@ -315,6 +316,11 @@ void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len)
             if (port->line_pos > 0) {
                 port->line_buf[port->line_pos] = '\0';
 
+                // コマンド名（最初のトークン）を小文字化
+                for (int j = 0; port->line_buf[j] != '\0' && port->line_buf[j] != ' '; j++) {
+                    port->line_buf[j] = tolower((unsigned char)port->line_buf[j]);
+                }
+
                 // Mutex で保護して実行
                 if (xSemaphoreTake(console_mutex, pdMS_TO_TICKS(100))) {
                     // ★ここでTLSにポート情報をセット（リファクタリング適用）
@@ -374,12 +380,12 @@ static void register_commands(void)
 
     // --- その他の自作コマンドを登録 ---
     const esp_console_cmd_t cmds[] = {
-        {"VERSION", "Show version", NULL, &cmd_version, NULL},
-        {"MYCALL", "Manage and select MYCALL", NULL, &cmd_mycall, NULL},
-        {"TESTTX", "Send test packet", "[message]", &cmd_testtx, NULL},
-        {"UISEND", "Send UI information", "<call>", &cmd_uisend, NULL},
-        {"UIMODE", "Set UI mode", "<mode>", &cmd_uimode, NULL},
-        {"LED", "Control LED (on/off)", "<on|off>", &cmd_led, NULL},
+        {"version", "Show version", NULL, &cmd_version, NULL},
+        {"mycall", "Manage and select MYCALL", NULL, &cmd_mycall, NULL},
+        {"testtx", "Send test packet", "[message]", &cmd_testtx, NULL},
+        {"uisend", "Send UI information", "<call>", &cmd_uisend, NULL},
+        {"uimode", "Set UI mode", "<mode>", &cmd_uimode, NULL},
+        {"led", "Control LED (on/off)", "<on|off>", &cmd_led, NULL},
     };
 
     for (int i = 0; i < sizeof(cmds) / sizeof(esp_console_cmd_t); i++) {
