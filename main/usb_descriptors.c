@@ -58,6 +58,23 @@ static const char* const_string_desc[] = {
     "TNC-Data"                     // 5: Port 1 Name
 };
 
+// usb_to_pc リングバッファのデータをUSBへ送り返すタスク
+static void usb_tx_task(void *pvParameters)
+{
+    for (;;) {
+        for (int itf = 0; itf < 2; itf++) {
+            size_t size;
+            uint8_t *data = (uint8_t *)xRingbufferReceive(usb_to_pc[itf], &size, 0);
+            if (data != NULL) {
+                tinyusb_cdcacm_write_queue(itf, data, size);
+                tinyusb_cdcacm_write_flush(itf, pdMS_TO_TICKS(10));
+                vRingbufferReturnItem(usb_to_pc[itf], (void *)data);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
 // USBポート入力用コールバック (共通化)
 void usb_port_rx_callback(int itf, cdcacm_event_t *event)
 {
@@ -133,5 +150,6 @@ void usb_init(void)
     };
     ESP_ERROR_CHECK(tinyusb_cdcacm_init(&acm_cfg_1));
 
+    xTaskCreate(usb_tx_task, "usb_tx", 2048, NULL, 5, NULL);
     ESP_LOGI(TAG, "USB Dual CDC installation complete.");
 }
