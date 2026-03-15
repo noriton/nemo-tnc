@@ -254,7 +254,7 @@ static int cmd_testtx(int argc, char **argv)
 int cmd_uisend(int argc, char **argv)
 {
     if (argc < 3) {
-        printf("Usage: uisend <DEST_CALL> <MESSAGE>\n");
+        cmd_response("Usage: uisend <DEST_CALL> <MESSAGE>\r\n");
         return 1;
     }
 
@@ -289,7 +289,7 @@ int cmd_uisend(int argc, char **argv)
 
     uint8_t send_tmp[512];
     if (total_len > sizeof(send_tmp)) {
-        printf("Error: Message too long\n");
+        cmd_response("Error: Message too long\r\n");
         return 1;
     }
 
