@@ -18,6 +18,8 @@ tnc_port_info_t pc_ports[MAX_PORTS];
 
 int master_console_port = 0;
 
+static const char *TAG = "PC_PORT";
+#define GUARD_TIME pdMS_TO_TICKS(1000)
 
 /**
  * 現在のポートがマスターコンソールか判定する
@@ -206,6 +208,8 @@ static void run_mode_uichat(tnc_port_info_t *port) {
     }
 }
 
+#define NOT_USED
+#ifndef NOT_USED
 void run_mode_transport(tnc_port_info_t *port) {
     port->trans_len = 0;
     port->esc_state = ESC_STATE_IDLE; // エスケープ判定状態を初期化
@@ -258,7 +262,7 @@ void run_mode_transport(tnc_port_info_t *port) {
         }
     }
 }
-
+#endif
 
 void run_mode_kiss(tnc_port_info_t *port) {
     kiss_context_t kiss_ctx;
@@ -343,7 +347,87 @@ static int check_escape_with_guard(tnc_port_info_t *port, const uint8_t *data, s
     return 0;
 }
 
+#ifndef NOT_USED
+/**
+ * ガードタイム付きエスケープシーケンス判定
+ */
+static int check_escape_with_guard(tnc_port_info_t *port, const uint8_t *data, size_t size) {
+    TickType_t now = xTaskGetTickCount();
+    TickType_t interval = now - port->last_rx_tick;
 
+    if (data != NULL && size > 0) {
+        if (interval >= GUARD_TIME) {
+            port->esc_state = ESC_STATE_READY;
+        }
+
+        if (port->esc_state == ESC_STATE_READY && size == 3 && 
+            data[0] == '+' && data[1] == '+' && data[2] == '+') {
+            port->esc_state = ESC_STATE_DETECTED;
+            port->last_rx_tick = now; 
+            return 0;
+        }
+
+        port->esc_state = ESC_STATE_IDLE;
+        port->last_rx_tick = now;
+        return 0;
+    } else {
+        if (port->esc_state == ESC_STATE_DETECTED && interval >= GUARD_TIME) {
+            port->esc_state = ESC_STATE_IDLE;
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif
+
+/**
+ * トランスポート（データ）モードの実行ループ
+ */
+void run_mode_transport(tnc_port_info_t *port) {
+    port->trans_len = 0;
+    port->esc_state = ESC_STATE_IDLE;
+    port->last_rx_tick = xTaskGetTickCount();
+
+    ESP_LOGI(TAG, "Port %d: Entered TRANSPORT mode", port->id);
+
+    while (port->mode == PORT_MODE_TRANSPORT) {
+        size_t size;
+        uint8_t *data = (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(10));
+        TickType_t now = xTaskGetTickCount();
+
+        // エスケープ判定
+        if (check_escape_with_guard(port, data, size)) {
+            port->mode = PORT_MODE_COMMAND;
+            const char *msg = "\r\nOK\r\nTNC> ";
+            xRingbufferSend(port->to_pc, (uint8_t*)msg, strlen(msg), 0);
+            if (data != NULL) {
+                vRingbufferReturnItem(port->from_pc, (void *)data);
+            }
+            break;
+        }
+
+        if (data != NULL) {
+            port->last_rx_tick = now;
+            for (size_t i = 0; i < size; i++) {
+                if (port->trans_len < TNC_PACLEN) {
+                    port->trans_buf[port->trans_len++] = data[i];
+                }
+                if (port->trans_len >= TNC_PACLEN) {
+                    enqueue_ui_packet(port, port->trans_buf, port->trans_len);
+                    port->trans_len = 0;
+                }
+            }
+            vRingbufferReturnItem(port->from_pc, (void *)data);
+        } else {
+            if (port->trans_len > 0) {
+                if ((now - port->last_rx_tick) > pdMS_TO_TICKS(TNC_PACTIME)) {
+                    enqueue_ui_packet(port, port->trans_buf, port->trans_len);
+                    port->trans_len = 0;
+                }
+            }
+        }
+    }
+}
 
 void poll_and_display_rx_packets(tnc_port_info_t *port) {
     // 受信キューを監視し、自局宛のUIフレームがあれば to_pc へ送る
