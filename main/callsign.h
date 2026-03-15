@@ -27,4 +27,17 @@ void callsign_normalize(char *call);
  */
 int callsign_validate(const char *call);
 
+/**
+ * コールサイン文字列をAX.25 / メタデータ用に分解する
+ *
+ * 入力例: "JH1FBM/P-3" -> out_base="JH1FBM", *out_ssid=3
+ *         "VK2FABC"    -> out_base="VK2FAB", *out_ssid=0  (6文字で切り捨て)
+ *         "W1AW-9"     -> out_base="W1AW",   *out_ssid=9
+ *
+ * @param call      入力コールサイン（正規化済み推奨）
+ * @param out_base  出力: BASE先頭6文字 + ヌル終端 (7バイト以上のバッファ)
+ * @param out_ssid  出力: SSID (0〜15、指定なしは0)
+ */
+void callsign_to_ax25(const char *call, char out_base[7], int *out_ssid);
+
 #endif /* CALLSIGN_H */

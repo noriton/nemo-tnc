@@ -111,3 +111,28 @@ int callsign_validate(const char *call)
     /* 末尾まで消費されていること */
     return (*p == '\0') ? 1 : 0;
 }
+
+void callsign_to_ax25(const char *call, char out_base[7], int *out_ssid)
+{
+    /* BASE: '/' または '-' が来るまで、最大6文字コピー */
+    int i = 0;
+    while (i < 6 && call[i] != '\0' && call[i] != '/' && call[i] != '-') {
+        out_base[i] = call[i];
+        i++;
+    }
+    out_base[i] = '\0';
+
+    /* SSID: '-' を探して数値変換 */
+    *out_ssid = 0;
+    const char *dash = call;
+    while (*dash != '\0' && *dash != '-') dash++;
+    if (*dash == '-') {
+        dash++;
+        int ssid = 0;
+        while (*dash >= '0' && *dash <= '9') {
+            ssid = ssid * 10 + (*dash - '0');
+            dash++;
+        }
+        if (ssid <= 15) *out_ssid = ssid;
+    }
+}
