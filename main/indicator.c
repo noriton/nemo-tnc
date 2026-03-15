@@ -12,6 +12,8 @@
 
 static led_strip_handle_t led_strip;
 static tnc_state_t current_state = TNC_ST_BOOT;
+static tnc_state_t state_before_off = TNC_ST_IDLE; // 消灯前の状態を保存
+static int led_forced_off = 0; // 1: 強制消灯中
 
 static int64_t last_rx_time = 0; // 最後にRXステートになった時刻(マイクロ秒)
 
@@ -24,6 +26,18 @@ void indicator_set_state(tnc_state_t new_state)
     current_state = new_state;
     if (new_state == TNC_ST_RX) {
         last_rx_time = esp_timer_get_time(); // 現在時刻（μs）を記録
+    }
+}
+
+void indicator_set_forced_off(int off)
+{
+    if (off) {
+        state_before_off = current_state;
+        led_forced_off = 1;
+        current_state = TNC_ST_OFF;
+    } else {
+        led_forced_off = 0;
+        current_state = state_before_off;
     }
 }
 

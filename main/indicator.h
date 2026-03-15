@@ -19,6 +19,9 @@ void indicator_init(void);
 // 状態設定関数
 void indicator_set_state(tnc_state_t new_state); // 他のファイルからこれを呼ぶ
 
+// LED強制消灯 (1: 消灯, 0: 通常動作に戻す)
+void indicator_set_forced_off(int off);
+
 
 
 // 色の設定 (R, G, B: 0-255)

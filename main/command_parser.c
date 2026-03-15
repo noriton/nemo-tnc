@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "nvs_if.h"
 #include "tx_frame.h"
+#include "indicator.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -169,6 +170,26 @@ static int cmd_mycall(int argc, char **argv)
 
     cmd_response("Unknown subcommand: %s\r\n", argv[1]);
     return 1;
+}
+
+// LED コマンド (on/off)
+static int cmd_led(int argc, char **argv)
+{
+    if (argc < 2) {
+        cmd_response("Usage: led <on|off>\r\n");
+        return 1;
+    }
+    if (strcmp(argv[1], "off") == 0) {
+        indicator_set_forced_off(1);
+        cmd_response("LED off\r\n");
+    } else if (strcmp(argv[1], "on") == 0) {
+        indicator_set_forced_off(0);
+        cmd_response("LED on\r\n");
+    } else {
+        cmd_response("Usage: led <on|off>\r\n");
+        return 1;
+    }
+    return 0;
 }
 
 // TESTTX コマンド (tx_frame経由で送信)
@@ -358,6 +379,7 @@ static void register_commands(void)
         {"TESTTX", "Send test packet", "[message]", &cmd_testtx, NULL},
         {"UISEND", "Send UI information", "<call>", &cmd_uisend, NULL},
         {"UIMODE", "Set UI mode", "<mode>", &cmd_uimode, NULL},
+        {"LED", "Control LED (on/off)", "<on|off>", &cmd_led, NULL},
     };
 
     for (int i = 0; i < sizeof(cmds) / sizeof(esp_console_cmd_t); i++) {
