@@ -15,10 +15,20 @@ typedef struct mode_mapping {
     const char *str;
 } mode_mapping_t;
 
-
-esp_err_t nvs_save_mycall(const char* callsign);
 esp_err_t nvs_load_mycall(char* buf, size_t max_len);
+esp_err_t nvs_save_mycall(const char* callsign);
 
+// モード用
+esp_err_t nvs_save_port_mode(int port_id, int portmode);
+esp_err_t nvs_load_port_mode(int *portmode, int port_id, int default_mode);
+
+// MYCALLリスト用
+esp_err_t nvs_save_mycall_list_item(int index, const char* callsign);
+esp_err_t nvs_load_mycall_list(char list[MAX_MYCALL_LIST][16]);
+
+// ポートごとの使用MYCALLインデックス用
+esp_err_t nvs_save_port_mycall_idx(int port_id, int idx);
+esp_err_t nvs_load_port_mycall_idx(int port_id, int *idx, int default_idx);
 
 /**
  * ポートごとのデフォルトモードを保存

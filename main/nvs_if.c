@@ -1,14 +1,25 @@
+#include <string.h>
+#include <stdio.h>
+#include "esp_log.h"
+#include "tnc_pc_port.h" // tnc_mode_table 参照用
 #include "nvs_if.h"
 #include "nvs_flash.h"
-#include "esp_log.h"
-#include <string.h>
-#include "tnc_pc_port.h" // tnc_mode_table 参照用
+
 
 static const char *KEY_MYCALL = "mycall";   // コールサインの未定義値
 
 static const char *TAG = "NVS_IF";
 static const char *NVS_NAMESPACE = "tnc_settings";
 
+
+esp_err_t nvs_save_mycall(const char* callsign)
+{
+    // リストの先頭（インデックス0）に保存する
+    return nvs_save_mycall_list_item(0, callsign);
+}
+
+#define UNUSED
+#ifndef UNUSED
 esp_err_t nvs_save_mycall(const char* callsign) {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
@@ -21,7 +32,23 @@ esp_err_t nvs_save_mycall(const char* callsign) {
     nvs_close(my_handle);
     return err;
 }
+#endif
 
+esp_err_t nvs_load_mycall(char* buf, size_t max_len)
+{
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("tnc_settings", NVS_READONLY, &my_handle);
+    if (err != ESP_OK) return err;
+
+    // インデックス0のキーを直接読み出す
+    err = nvs_get_str(my_handle, "mycall_0", buf, &max_len);
+    nvs_close(my_handle);
+    
+    return err;
+}
+
+#define UNUSED
+#ifndef UNUSED
 esp_err_t nvs_load_mycall(char* buf, size_t max_len) {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &my_handle);
@@ -31,7 +58,85 @@ esp_err_t nvs_load_mycall(char* buf, size_t max_len) {
     nvs_close(my_handle);
     return err;
 }
+#endif
 
+esp_err_t nvs_save_mycall_list_item(int index, const char* callsign)
+{
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("tnc_settings", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    char key[16];
+    snprintf(key, sizeof(key), "mycall_%d", index);
+    err = nvs_set_str(my_handle, key, callsign);
+
+    if (err == ESP_OK) {
+        err = nvs_commit(my_handle);
+    }
+    nvs_close(my_handle);
+    return err;
+}
+
+esp_err_t nvs_load_mycall_list(char list[MAX_MYCALL_LIST][16])
+{
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("tnc_settings", NVS_READONLY, &my_handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    for (int i = 0; i < MAX_MYCALL_LIST; i++) {
+        char key[16];
+        snprintf(key, sizeof(key), "mycall_%d", i);
+        size_t len = 16;
+        // 取得できなくてもエラーにせず、初期値を維持する
+        nvs_get_str(my_handle, key, list[i], &len);
+    }
+    nvs_close(my_handle);
+    return ESP_OK;
+}
+
+esp_err_t nvs_save_port_mycall_idx(int port_id, int idx)
+{
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("tnc_settings", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    char key[16];
+    snprintf(key, sizeof(key), "p%d_myidx", port_id);
+    err = nvs_set_i32(my_handle, key, (int32_t)idx);
+
+    if (err == ESP_OK) {
+        err = nvs_commit(my_handle);
+    }
+    nvs_close(my_handle);
+    return err;
+}
+
+esp_err_t nvs_load_port_mycall_idx(int port_id, int *idx, int default_idx)
+{
+    *idx = default_idx;
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("tnc_settings", NVS_READONLY, &my_handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    char key[16];
+    snprintf(key, sizeof(key), "p%d_myidx", port_id);
+    int32_t val = default_idx;
+    err = nvs_get_i32(my_handle, key, &val);
+
+    if (err == ESP_OK) {
+        *idx = (int)val;
+    }
+    nvs_close(my_handle);
+    return ESP_OK;
+}
 
 esp_err_t nvs_save_port_mode(int port_id, int portmode) {
     const char *s = NULL;

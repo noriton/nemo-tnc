@@ -7,6 +7,8 @@
 #include "freertos/task.h" // TickType_tのために必要
 
 #include "kiss_parser.h"
+#define MAX_MYCALL_LIST 8
+
 
 // --- トランスペアレントモード用設定 ---
 #define TNC_PACLEN  256          // 最大パケット長 (バイト)
@@ -36,7 +38,7 @@ const mode_info_t tnc_mode_table[] = {
     { PORT_MODE_COMMAND,   "CMD",  "Command Mode" },
     { PORT_MODE_TRANSPORT, "DATA", "Transport Mode" },
     { PORT_MODE_KISS,      "KISS", "KISS Mode" },
-/    { PORT_MODE_PPP,       "PPP",  "PPP Mode" },
+//    { PORT_MODE_PPP,       "PPP",  "PPP Mode" },
     { PORT_MODE_UICHAT,    "UI",   "UI Chat Mode" },
     { PORT_MODE_BRIDGE,    "BRDG", "Bridge Mode" },
     { PORT_MODE_LOOPBACK,  "LOOP", "Loopback Mode" }
@@ -64,6 +66,10 @@ typedef struct tnc_port_info {
     RingbufHandle_t to_pc;     // TNC -> PC (送信)
     RingbufHandle_t send_tx;   // 無線側への送信リングバッファ 
     RingbufHandle_t recv_rx;   // 無線側からの受信リングバッファ
+
+    int mycall_idx;         // 当該ポートのMYCALLへのインデックス
+                            // NVSに保存して起動時に復元する
+
     SemaphoreHandle_t mutex;   // コマンド解析部の保護用のミューテックス
 
     // --- コマンド/チャットモード用のバッファと状態 ---  

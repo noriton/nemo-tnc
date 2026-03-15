@@ -1,3 +1,4 @@
+#define TNC_PC_PORT_C
 #include <string.h>
 #include "tnc_pc_port.h"
 #include "tnc_buffer.h"
@@ -20,6 +21,12 @@ int master_console_port = 0;
 
 static const char *TAG = "PC_PORT";
 #define GUARD_TIME pdMS_TO_TICKS(1000)
+
+// 8枠分の初期値を用意
+char mycall_list[MAX_MYCALL_LIST][16] = {
+    "N0CALL-0", "N0CALL-1", "N0CALL-2", "N0CALL-3",
+    "N0CALL-4", "N0CALL-5", "N0CALL-6", "N0CALL-7"
+};
 
 /**
  * 現在のポートがマスターコンソールか判定する
