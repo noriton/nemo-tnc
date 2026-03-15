@@ -12,15 +12,42 @@
 #define TNC_PACLEN  256          // 最大パケット長 (バイト)
 #define TNC_PACTIME 500          // パケット送信待ち時間 (ms) - データが途切れてから送信するまでの時間
 
-typedef enum tnc_port_mode{
-    PORT_MODE_UICHAT,       // UIチャットモード (改行文字で区切られた文字列を生フレームとして送信)
-    PORT_MODE_TRANSPORT,    // トランスペアレントモード  (受信データを長さとタイマーで分割して送信)
-    PORT_MODE_KISS,         // KISSバイナリモード（KISSパケットを分解しAX.25フレーム送信）
-//    PORT_MODE_PPP,          // PPPモード（検討中）USBシリアル越しにPPPサーバに見せる（要PPP実装）
-//    PORT_MODE_TURNBACK,     // 同一ポートのtoPCに分割して折り返し（デバッグ用）
-    PORT_MODE_LOOPBACK,        // 別のポートと相互に接続（デバッグ用）
-    PORT_MODE_COMMAND     // コマンドモード (コマンドパーサで処理)
+typedef enum tnc_port_mode {
+    PORT_MODE_COMMAND,          // コマンドモード (コマンドパーサで処理)
+    PORT_MODE_TRANSPORT,        // トランスペアレントモード  (受信データを長さとタイマーで分割して送信)
+    PORT_MODE_KISS,             // KISSバイナリモード（KISSパケットを分解しAX.25フレーム送信）
+    PORT_MODE_UICHAT,           // UIチャットモード (改行文字で区切られた文字列を生フレームとして送信)
+//  PORT_MODE_PPP,              // PPPモード（検討中）USBシリアル越しにPPPサーバに見せる（要PPP実装）
+    PORT_MODE_BRIDGE,           // ブリッジモード （別ポートに各プロトコル段で送受信を相互に接続。プロトコルテスト用）
+    PORT_MODE_LOOPBACK,         // ループバックモード （同一ポートにデータをそのまま送り返す。テスト用）
+    PORT_MODE_MAX               // モード数のカウント用兼番兵（新モード追加時はこれより前に挿入）
 } tnc_port_mode_t;
+
+typedef struct mode_info {
+    tnc_port_mode_t mode;
+    const char *nvs_str;   // NVS保存用 (例: "KISS")
+    const char *desc;      // 画面表示用 (例: "KISS Mode")
+} mode_info_t;
+
+#include "frame_metadata.h"
+// tnc_pc_port.cのみ実体宣言、それ以外のファイルでは extern で参照
+#ifdef TNC_PC_PORT_C
+const mode_info_t tnc_mode_table[] = {
+    { PORT_MODE_COMMAND,   "CMD",  "Command Mode" },
+    { PORT_MODE_TRANSPORT, "DATA", "Transport Mode" },
+    { PORT_MODE_KISS,      "KISS", "KISS Mode" },
+/    { PORT_MODE_PPP,       "PPP",  "PPP Mode" },
+    { PORT_MODE_UICHAT,    "UI",   "UI Chat Mode" },
+    { PORT_MODE_BRIDGE,    "BRDG", "Bridge Mode" },
+    { PORT_MODE_LOOPBACK,  "LOOP", "Loopback Mode" }
+};
+#else
+extern const mode_info_t tnc_mode_table[];
+#endif
+
+
+
+
 
 typedef enum escape_state {
     ESC_STATE_IDLE,    // 無音待ち（1秒以上経過を待っている）
@@ -35,9 +62,9 @@ typedef struct tnc_port_info {
     tnc_port_mode_t mode;      // 現在のモード
     RingbufHandle_t from_pc;   // PC -> TNC (受信)
     RingbufHandle_t to_pc;     // TNC -> PC (送信)
-    RingbufHandle_t send_tx;   // 無線側への送信リングバッファ (モードによってはto_pcと同じ)
-    RingbufHandle_t recv_rx;   // 無線側からの受信リングバッファ (モードによってはfrom_pcと同じ)
-    SemaphoreHandle_t mutex;   // ポート状態保護用のミューテックス
+    RingbufHandle_t send_tx;   // 無線側への送信リングバッファ 
+    RingbufHandle_t recv_rx;   // 無線側からの受信リングバッファ
+    SemaphoreHandle_t mutex;   // コマンド解析部の保護用のミューテックス
 
     // --- コマンド/チャットモード用のバッファと状態 ---  
     char line_buf[256];        // コマンド,チャット用の一行バッファ

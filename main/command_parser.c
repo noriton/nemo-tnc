@@ -8,6 +8,8 @@
 #include "esp_console.h"
 #include "esp_log.h"
 
+#include "frame_metadata.h" // メタデータ構造体定義を使用
+
 static void register_commands(void);
 
 static SemaphoreHandle_t console_mutex = NULL;
@@ -95,40 +97,70 @@ static int cmd_testtx(int argc, char **argv) {
     return 0;
 }
 
-// UISEND コマンド (UIframeを簡易に送信)
-static int cmd_uisend(int argc, char **argv) {
-    char my_call[16] = {0};
-    nvs_load_mycall(my_call, sizeof(my_call));
-    
-    ax25_address_t addr = {
-        .dest_call = "CQ    ", .dest_ssid = 0,
-        .src_call = my_call, .src_ssid = 0
-    };
-
-    uint8_t frame[300];
-    const char *msg = (argc > 1) ? argv[1] : "HELLO";
-    
-    // 平文の表示 (Input Portへフィードバック)
-    char plain_msg[64];
-    int p_len = snprintf(plain_msg, sizeof(plain_msg), "\r\nSending: %s\r\n", msg);
-    // 平文の表示 (Input Portへフィードバック)
-    cmd_response("\r\nSending: %s\r\n", msg);
-
-    size_t len = ax25_build_ui_frame(&addr, (uint8_t *)msg, strlen(msg), frame);
-
-    // echoへエンキュー
-    uint8_t portnum = 0; //暫定
-    if (tx_frame_enqueue(frame, len, portnum) == ESP_OK) {
-        cmd_response("Queued to TX Buffer.\r\n");
-    } else {
-        cmd_response("Failed to Queue.\r\n");
+/**
+ * uisend コマンドの実装
+ * 形式: uisend <DEST_CALL> <MESSAGE...>
+ */
+int cmd_uisend(int argc, char **argv) {
+    if (argc < 3) {
+        printf("Usage: uisend <DEST_CALL> <MESSAGE>\n");
+        return 1;
     }
 
-    // UISENDは送信コマンドなので、実行結果は「キューに入れた」ことです。
-    // 「受信した」結果は rx_frame が担当します。
+    // 引数の取得
+    const char *dest_call = argv[1];
+    
+    // メッセージ部分はスペース区切りの全引数を結合するか、
+    // 簡易的に argv[2] 以降を連結する（ここでは argv[2] 以降を使用）
+    char message[256] = {0};
+    for (int i = 2; i < argc; i++) {
+        strcat(message, argv[i]);
+        if (i < argc - 1) strcat(message, " ");
+    }
 
+    size_t payload_len = strlen(message);
+    
+    // 現在実行中のタスクから TLS 経由でポート情報を取得
+    tnc_port_info_t *port = (tnc_port_info_t *)pvTaskGetThreadLocalStoragePointer(NULL, 0);
+    if (port == NULL) return 1;
+
+    // --- メタデータ付きパケットの構築 ---
+    // ここで重要なのは、後段に「宛先コールサイン」をどう伝えるかです。
+    // メタデータ構造体に dest_call 領域を追加するか、
+    // ペイロードの先頭に特定のフォーマットで埋め込むのが良いでしょう。
+    
+    // 今回は拡張性を考え、メタデータに「宛先指定フラグ」を持たせたと仮定します
+    size_t header_len = sizeof(tnc_meta_header_t);
+    size_t total_len = header_len + payload_len;
+
+    uint8_t send_tmp[512];
+    if (total_len > sizeof(send_tmp)) {
+        printf("Error: Message too long\n");
+        return 1;
+    }
+
+    tnc_meta_header_t *meta = (tnc_meta_header_t *)send_tmp;
+    meta->version     = TNC_META_VERSION_1;
+    meta->type        = META_TYPE_DATA_UI;
+    meta->header_len  = (uint16_t)header_len;
+    meta->payload_len = (uint16_t)payload_len;
+    meta->port_id     = (uint8_t)port->id;
+    
+    // 【拡張案】メタデータに宛先コールサインを一時的に保持
+    // 構造体に char dest[10] を追加しておくとスムーズです
+    strncpy((char*)meta->dest_call, dest_call, 12); // 12は dest_call のサイズ (11文字 + NULL)
+//    strncpy((char*)meta->src_call, port->my_call, 12); // 12は src_call のサイズ (11文字 + NULL)
+    memcpy(send_tmp + header_len, message, payload_len);
+
+    // 送信キューへ投入
+    xRingbufferSend(port->send_tx, send_tmp, total_len, pdMS_TO_TICKS(10));
+
+    //printf("UI Frame queued to %s\n", dest_call);
+    
+    // コマンド実行後は自動的にコマンドプロンプトに戻る（esp_consoleの仕様）
     return 0;
 }
+
 
 // --- コマンド解析ロジック ---
 

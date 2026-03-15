@@ -15,16 +15,45 @@ static int check_escape_with_guard(tnc_port_info_t *port, const uint8_t *data, s
 
 #define MAX_PORTS 2
 tnc_port_info_t pc_ports[MAX_PORTS];
-int master_comand_port = 0;
+
+int master_console_port = 0;
+
+
+/**
+ * 現在のポートがマスターコンソールか判定する
+ */
+bool is_master_console(tnc_port_info_t *port) {
+    return (port->id == master_console_port);
+}
+
+/**
+ * マスターコンソールに対してのみ、またはマスターコンソールを含めて
+ * システム通知を送るヘルパー
+ */
+void system_notify(const char *fmt, ...) {
+    char buf[128];
+    va_list args;
+    va_start(args, fmt);
+    int len = vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    if (len > 0) {
+        // マスターコンソールのポート情報を取得（管理配列 pc_ports 等から）
+        tnc_port_info_t *master = &pc_ports[master_console_port];
+        if (master->to_pc) {
+            xRingbufferSend(master->to_pc, (uint8_t*)buf, len, 0);
+        }
+    }
+}
 
 void tnc_pc_ports_init(void) {
     for (int i = 0; i < MAX_PORTS; i++) {
         pc_ports[i].id = i;
 //        pc_ports[i].mode = PORT_MODE_COMMAND; // 初期状態はどちらもコマンドモード
 
-        if (i == master_comand_port) {
+        if (i == master_console_port) {
             pc_ports[i].mode = PORT_MODE_COMMAND; 
-            // マスターコマンドポートは起動時（初期化時）コマンドモード
+            // マスターコンソールポートは起動時（初期化時）コマンドモード
         } else {
             pc_ports[i].mode = PORT_MODE_COMMAND; 
             // その他のポートは前回保存されたモードで起動（だけどとりあえずコマンドモード）

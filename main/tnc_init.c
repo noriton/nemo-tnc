@@ -5,7 +5,7 @@
  *
  * Copyright (c) 2026 by Norito Nemoto, JH1FBM
  */
-
+#define TNC_INIT_C
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -51,10 +51,10 @@ void tnc_init(void)
     command_parser_init();
     tnc_pc_ports_init();
 
+
+    // その他のTNC全体の初期化処理があればここに追加
+
     rx_frame_init(); // RXフレーム受信タスク起動 (現状はLoopback/Debug用)
-
-    // その他のTNC初期化処理があればここに追加
-
 
 }
 

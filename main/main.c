@@ -18,13 +18,11 @@
 
 #include "sdkconfig.h"
 
-#define TAGNAME "NEMO_TNC"
-
 #include "nemo_tnc.h"
 #include "indicator.h"
 #include "tnc_buffer.h"
 
-
+static const char *TAG = "NEMO_TNC";
 
 // --- メイン関数 ---
 

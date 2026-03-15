@@ -11,10 +11,4 @@
 void tnc_init(void);
 void usb_init(void);
 
-#ifdef TAGNAME
-const char *TAG = TAGNAME;
-#else
-extern const char *TAG;
-#endif // TAGNAME
-
 #endif // NEMO_TNC_H

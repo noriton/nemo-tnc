@@ -36,6 +36,8 @@ enum {
 // --- USB ディスクリプタ定義 (2ポート構成) ---
 #define TUSB_DESC_CONFIG_LEN (TUD_CONFIG_DESC_LEN + 2 * TUD_CDC_DESC_LEN)
 
+static const char *TAG = "USB_DESC";
+
 static const uint8_t const_config_desc[] = {
     // 構成ヘッダー: インターフェース総数は 4 (CDCポートあたり2つ使用)
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, TUSB_DESC_CONFIG_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
