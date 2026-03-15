@@ -5,6 +5,7 @@
 #include "frame_metadata.h"
 #include "kiss_parser.h" // メタデータ定義などを参照
 #include "tnc_buffer.h"
+#include "nvs_if.h"
 #include <string.h>
 
 
@@ -59,6 +60,9 @@ void system_notify(const char *fmt, ...)
 
 void tnc_pc_ports_init(void)
 {
+    // MYCALLリストをNVSから復元
+    nvs_load_mycall_list(mycall_list);
+
     for (int i = 0; i < MAX_PORTS; i++) {
         pc_ports[i].id = i;
         //        pc_ports[i].mode = PORT_MODE_COMMAND; //
@@ -91,6 +95,9 @@ void tnc_pc_ports_init(void)
         pc_ports[i].to_pc = usb_to_pc[i]; // PCへの送信(戻り）用リングバッファ
 
         pc_ports[i].line_pos = 0;
+
+        // ポートのMYCALLインデックスをNVSから復元（未保存なら0）
+        nvs_load_port_mycall_idx(i, &pc_ports[i].mycall_idx, 0);
 
         kiss_init(&(pc_ports[i].kiss_ctx)); // KISSパーサのコンテキスト初期化
         // タスク起動
