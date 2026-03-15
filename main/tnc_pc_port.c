@@ -180,8 +180,8 @@ static void run_mode_uichat(tnc_port_info_t *port)
         // 1. ガードタイム付きエスケープ判定
         if (check_escape_with_guard(port, data, size)) {
             port->mode = PORT_MODE_COMMAND;
-            const char *msg = "\r\nOK\r\nTNC> ";
-            xRingbufferSend(port->to_pc, (uint8_t *)msg, strlen(msg), 0);
+            xRingbufferSend(port->to_pc, (uint8_t *)"\r\nOK\r\n", 6, 0);
+            send_prompt(port);
 
             if (data != NULL) {
                 vRingbufferReturnItem(port->from_pc, (void *)data);
@@ -243,8 +243,8 @@ void run_mode_transport(tnc_port_info_t *port)
         if (check_escape_with_guard(port, data, size)) {
             flush_transport_buffer(port); // 残っているデータをパケット化して送信
             port->mode = PORT_MODE_COMMAND;
-            const char *msg = "\r\nOK\r\nTNC> ";
-            xRingbufferSend(port->to_pc, (uint8_t *)msg, strlen(msg), 0);
+            xRingbufferSend(port->to_pc, (uint8_t *)"\r\nOK\r\n", 6, 0);
+            send_prompt(port);
 
             if (data != NULL) {
                 vRingbufferReturnItem(port->from_pc, (void *)data);
@@ -425,8 +425,8 @@ void run_mode_transport(tnc_port_info_t *port)
         // エスケープ判定
         if (check_escape_with_guard(port, data, size)) {
             port->mode = PORT_MODE_COMMAND;
-            const char *msg = "\r\nOK\r\nTNC> ";
-            xRingbufferSend(port->to_pc, (uint8_t *)msg, strlen(msg), 0);
+            xRingbufferSend(port->to_pc, (uint8_t *)"\r\nOK\r\n", 6, 0);
+            send_prompt(port);
             if (data != NULL) {
                 vRingbufferReturnItem(port->from_pc, (void *)data);
             }

@@ -319,6 +319,21 @@ int cmd_uisend(int argc, char **argv)
 
 // --- コマンド解析ロジック ---
 
+void send_prompt(tnc_port_info_t *port)
+{
+    char base[7];
+    int  ssid;
+    callsign_to_ax25(mycall_list[port->mycall_idx], base, &ssid);
+
+    char prompt[32];
+    if (ssid == 0) {
+        snprintf(prompt, sizeof(prompt), "PORT%d::%s> ", port->id, base);
+    } else {
+        snprintf(prompt, sizeof(prompt), "PORT%d::%s-%d> ", port->id, base, ssid);
+    }
+    xRingbufferSend(port->to_pc, (uint8_t *)prompt, strlen(prompt), 0);
+}
+
 void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len)
 {
     if (port == NULL || data == NULL)
@@ -356,8 +371,7 @@ void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len)
             }
             // コマンド実行後、バッファをリセットしてプロンプトを表示
             port->line_pos = 0;
-            const char *prompt = "TNC> "; // 既に \r\n しているのでここはシンプルに
-            xRingbufferSend(port->to_pc, (uint8_t *)prompt, strlen(prompt), 0);
+            send_prompt(port);
         } else {
             // Backspace (0x08) や Delete (0x7F) の対応
             if (c == 0x08 || c == 0x7F) {

@@ -26,4 +26,10 @@ void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len);
  */
 void command_parser_init(void);
 
+/**
+ * @brief コマンドプロンプトを送出する
+ * 形式: "PORT<id>:<CALL>-<SSID>> "
+ */
+void send_prompt(tnc_port_info_t *port);
+
 #endif // COMMAND_PARSER_H
