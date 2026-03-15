@@ -5,6 +5,7 @@
 #include "nvs_if.h"
 #include "tx_frame.h"
 #include "indicator.h"
+#include "callsign.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -90,7 +91,17 @@ static int cmd_mycall(int argc, char **argv)
             cmd_response("Usage: mycall set <CALLSIGN> [0-7|-]\r\n");
             return 1;
         }
-        const char *callsign = argv[2];
+
+        /* 正規化（大文字化）してバリデーション */
+        char callsign_buf[CALLSIGN_BUFSIZE];
+        strncpy(callsign_buf, argv[2], sizeof(callsign_buf) - 1);
+        callsign_buf[sizeof(callsign_buf) - 1] = '\0';
+        callsign_normalize(callsign_buf);
+        if (!callsign_validate(callsign_buf)) {
+            cmd_response("Error: Invalid callsign: %s\r\n", argv[2]);
+            return 1;
+        }
+        const char *callsign = callsign_buf;
         int slot;
 
         if (argc >= 4) {
