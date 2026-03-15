@@ -67,11 +67,11 @@ static void usb_tx_task(void *pvParameters)
             uint8_t *data = (uint8_t *)xRingbufferReceive(usb_to_pc[itf], &size, 0);
             if (data != NULL) {
                 tinyusb_cdcacm_write_queue(itf, data, size);
-                tinyusb_cdcacm_write_flush(itf, pdMS_TO_TICKS(10));
+                tinyusb_cdcacm_write_flush(itf, 0);  // ノンブロッキング
                 vRingbufferReturnItem(usb_to_pc[itf], (void *)data);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(1);  // 必ずIDLEにyield
     }
 }
 

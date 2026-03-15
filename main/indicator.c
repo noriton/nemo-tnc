@@ -23,10 +23,14 @@ static TaskHandle_t indicator_task_handle = NULL;
 // 状態を変更する関数
 void indicator_set_state(tnc_state_t new_state)
 {
-    current_state = new_state;
     if (new_state == TNC_ST_RX) {
         last_rx_time = esp_timer_get_time(); // 現在時刻（μs）を記録
     }
+    if (led_forced_off) {
+        state_before_off = new_state; // 消灯中は復帰先だけ更新
+        return;
+    }
+    current_state = new_state;
 }
 
 void indicator_set_forced_off(int off)
