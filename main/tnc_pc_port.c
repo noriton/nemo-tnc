@@ -12,7 +12,7 @@
 void send_uichat_packet(tnc_port_info_t *port, uint8_t *payload, size_t len);
 void poll_and_display_rx_packets(tnc_port_info_t *port);
 void pc_port_task(void *pvParameters);
-void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len);
+void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len, char *dest_call);
 static int check_escape_with_guard(tnc_port_info_t *port, const uint8_t *data,
                                    size_t size);
 
@@ -210,7 +210,7 @@ static void run_mode_uichat(tnc_port_info_t *port)
                     if (port->line_pos > 0) {
                         // ★メタデータ付きパケット送信
                         // (トランスポートと共通のロジックを流用可能)
-                        enqueue_ui_packet(port, (uint8_t *)port->line_buf, port->line_pos);
+                        enqueue_ui_packet(port, (uint8_t *)port->line_buf, port->line_pos, NULL); // TODO: 宛先call情報追加必要
 
                         // 送信後の改行とプロンプト
                         xRingbufferSend(port->to_pc, (uint8_t *)"\r\n(UICHAT)> ", 13, 0);
@@ -447,7 +447,7 @@ void run_mode_transport(tnc_port_info_t *port)
                     port->trans_buf[port->trans_len++] = data[i];
                 }
                 if (port->trans_len >= TNC_PACLEN) {
-                    enqueue_ui_packet(port, port->trans_buf, port->trans_len);
+                    enqueue_ui_packet(port, port->trans_buf, port->trans_len, NULL); // TODO: 宛先call情報追加必要
                     port->trans_len = 0;
                 }
             }
@@ -455,7 +455,7 @@ void run_mode_transport(tnc_port_info_t *port)
         } else {
             if (port->trans_len > 0) {
                 if ((now - port->last_rx_tick) > pdMS_TO_TICKS(TNC_PACTIME)) {
-                    enqueue_ui_packet(port, port->trans_buf, port->trans_len);
+                    enqueue_ui_packet(port, port->trans_buf, port->trans_len, NULL); // TODO: 宛先call情報追加必要
                     port->trans_len = 0;
                 }
             }
@@ -474,7 +474,7 @@ void poll_and_display_rx_packets(tnc_port_info_t *port)
 /**
  * UIフレーム（UICHAT / TRANSPORT）用の共通パケット投入関数
  */
-void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len)
+void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len, char *dest_call)
 {
     size_t header_len = sizeof(tnc_meta_header_t);
     size_t total_len = header_len + len;
@@ -491,6 +491,13 @@ void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len)
     meta->payload_len = (uint16_t)len;
     meta->port_id = (uint8_t)port->id;
     meta->reserved = 0;
+
+    if (dest_call != NULL) {
+        strncpy(meta->dest_call, dest_call, sizeof(meta->dest_call) - 1);
+        meta->dest_call[sizeof(meta->dest_call) - 1] = '\0';
+    } else {
+        meta->dest_call[0] = '\0';
+    }
 
     memcpy(send_tmp + header_len, payload, len);
 

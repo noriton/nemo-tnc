@@ -83,5 +83,6 @@ typedef struct tnc_port_info {
 } tnc_port_info_t;
 
 void tnc_pc_ports_init(void);
+void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len, char *dest_call); // TODO: 場所はとりあえず暫定
 
 #endif /* TNC_PC_PORT_H */

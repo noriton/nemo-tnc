@@ -11,7 +11,6 @@
 #include <ctype.h>
 
 
-#include "frame_metadata.h" // メタデータ構造体定義を使用
 
 static void register_commands(void);
 
@@ -278,42 +277,8 @@ int cmd_uisend(int argc, char **argv)
     if (port == NULL)
         return 1;
 
-    // --- メタデータ付きパケットの構築 ---
-    // ここで重要なのは、後段に「宛先コールサイン」をどう伝えるかです。
-    // メタデータ構造体に dest_call 領域を追加するか、
-    // ペイロードの先頭に特定のフォーマットで埋め込むのが良いでしょう。
+    enqueue_ui_packet(port, (uint8_t *)message, payload_len, (char *)dest_call);
 
-    // 今回は拡張性を考え、メタデータに「宛先指定フラグ」を持たせたと仮定します
-    size_t header_len = sizeof(tnc_meta_header_t);
-    size_t total_len = header_len + payload_len;
-
-    uint8_t send_tmp[512];
-    if (total_len > sizeof(send_tmp)) {
-        cmd_response("Error: Message too long\r\n");
-        return 1;
-    }
-
-    tnc_meta_header_t *meta = (tnc_meta_header_t *)send_tmp;
-    meta->version = TNC_META_VERSION_1;
-    meta->type = META_TYPE_DATA_UI;
-    meta->header_len = (uint16_t)header_len;
-    meta->payload_len = (uint16_t)payload_len;
-    meta->port_id = (uint8_t)port->id;
-
-    // 【拡張案】メタデータに宛先コールサインを一時的に保持
-    // 構造体に char dest[10] を追加しておくとスムーズです
-    strncpy((char *)meta->dest_call, dest_call,
-            12); // 12は dest_call のサイズ (11文字 + NULL)
-    //    strncpy((char*)meta->src_call, port->my_call, 12); // 12は src_call
-    //    のサイズ (11文字 + NULL)
-    memcpy(send_tmp + header_len, message, payload_len);
-
-    // 送信キューへ投入
-    xRingbufferSend(port->send_tx, send_tmp, total_len, pdMS_TO_TICKS(10));
-
-    // printf("UI Frame queued to %s\n", dest_call);
-
-    // コマンド実行後は自動的にコマンドプロンプトに戻る（esp_consoleの仕様）
     return 0;
 }
 
