@@ -12,6 +12,9 @@ static const char *TAG = "NVS_IF";
 static const char *NVS_NAMESPACE = "tnc_settings";
 
 
+// TODO(未使用): tnc_init.c の mycall グローバル変数廃止に伴い呼び出し元なし。
+//   mycall_list / mycall_idx の per-port 管理に統合済み。
+//   将来的に単一コールサイン設定 API として再利用する場合に備え残存。
 esp_err_t nvs_save_mycall(const char* callsign)
 {
     // リストの先頭（インデックス0）に保存する
@@ -35,6 +38,9 @@ esp_err_t nvs_save_mycall(const char* callsign)
 }
 #endif
 
+// TODO(未使用): tnc_init.c の mycall グローバル変数廃止に伴い呼び出し元なし。
+//   起動ログ用途は mycall_list[0] (tnc_pc_ports_init 後) で代替済み。
+//   将来的な利用に備え残存。
 esp_err_t nvs_load_mycall(char* buf, size_t max_len)
 {
     nvs_handle_t my_handle;
@@ -44,7 +50,7 @@ esp_err_t nvs_load_mycall(char* buf, size_t max_len)
     // インデックス0のキーを直接読み出す
     err = nvs_get_str(my_handle, "mycall_0", buf, &max_len);
     nvs_close(my_handle);
-    
+
     return err;
 }
 

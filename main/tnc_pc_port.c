@@ -68,11 +68,11 @@ void tnc_pc_ports_init(void)
         //        初期状態はどちらもコマンドモード
 
         if (i == master_console_port) {
+            // マスターコンソールポートは常にコマンドモードで起動
             pc_ports[i].mode = PORT_MODE_COMMAND;
-            // マスターコンソールポートは起動時（初期化時）コマンドモード
         } else {
-            pc_ports[i].mode = PORT_MODE_COMMAND;
-            // その他のポートは前回保存されたモードで起動（だけどとりあえずコマンドモード）
+            // その他のポートは NVS から前回のモードを復元（未保存なら COMMAND）
+            nvs_load_port_mode((int *)&pc_ports[i].mode, i, PORT_MODE_COMMAND);
         }
 
         // ループバックや相互接続のペアリング設定
@@ -97,8 +97,8 @@ void tnc_pc_ports_init(void)
 
         pc_ports[i].line_pos = 0;
 
-        // ポートのMYCALLインデックスをNVSから復元（未保存なら0）
-        nvs_load_port_mycall_idx(i, &pc_ports[i].mycall_idx, 0);
+        // ポートのMYCALLインデックスをNVSから復元（未保存ならポートIDをデフォルトに）
+        nvs_load_port_mycall_idx(i, &pc_ports[i].mycall_idx, i);
 
         kiss_init(&(pc_ports[i].kiss_ctx)); // KISSパーサのコンテキスト初期化
         // タスク起動

@@ -22,8 +22,6 @@
 #include "rx_frame.h"
 #include "rawpacket.h"
 
-char mycall[16] = "N0CALL"; // デフォルトコールサイン
-
 void tnc_init(void)
 {
     // NVSの初期化（お約束のコード）
@@ -33,13 +31,6 @@ void tnc_init(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
-    if (nvs_load_mycall(mycall, sizeof(mycall)) == ESP_OK) {
-        ESP_LOGI("TNC", "********************************");
-        ESP_LOGI("TNC", "  NEMO-TNC Starting...         ");
-        ESP_LOGI("TNC", "  Callsign: %s                 ", mycall);
-        ESP_LOGI("TNC", "********************************");
-    }
 
     // ... その他の初期化 (indicator, buffer, etc.) ...
     indicator_init(); // インジケータ初期化
@@ -52,6 +43,12 @@ void tnc_init(void)
     command_parser_init();
     tnc_pc_ports_init();
 
+    // 起動バナー（mycall_list は tnc_pc_ports_init() 内で NVS から復元済み）
+    extern char mycall_list[MAX_MYCALL_LIST][16];
+    ESP_LOGI("TNC", "********************************");
+    ESP_LOGI("TNC", "  NEMO-TNC Starting...         ");
+    ESP_LOGI("TNC", "  Callsign: %s                 ", mycall_list[0]);
+    ESP_LOGI("TNC", "********************************");
 
     // その他のTNC全体の初期化処理があればここに追加
 

@@ -99,6 +99,8 @@ static int mycall_do_set(tnc_port_info_t *port, const char *callsign_arg, const 
             cmd_response("Error: Slot must be 0-%d.\r\n", MAX_MYCALL_LIST - 1);
             return 1;
         }
+        port->mycall_idx = slot;
+        nvs_save_port_mycall_idx(port->id, slot);
     }
 
     strncpy(mycall_list[slot], callsign_buf, sizeof(mycall_list[slot]) - 1);
