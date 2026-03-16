@@ -9,7 +9,6 @@
 #include <string.h>
 
 
-void send_uichat_packet(tnc_port_info_t *port, uint8_t *payload, size_t len);
 void poll_and_display_rx_packets(tnc_port_info_t *port);
 void pc_port_task(void *pvParameters);
 void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len, char *dest_call);
@@ -503,30 +502,6 @@ void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len, char
 
     // No-Split リングバッファへ
     xRingbufferSend(port->send_tx, send_tmp, total_len, pdMS_TO_TICKS(10));
-}
-
-void send_uichat_packet(tnc_port_info_t *port, uint8_t *payload, size_t len)
-{
-    size_t total_len = sizeof(tnc_meta_header_t) + len;
-
-    // 送信用バッファ（スタックに確保）
-    uint8_t tmp_buf[512];
-    if (total_len > sizeof(tmp_buf))
-        return;
-
-    tnc_meta_header_t *meta = (tnc_meta_header_t *)tmp_buf;
-    meta->version = TNC_META_VERSION_1;
-    meta->type = META_TYPE_DATA_UI; // UIフレームとして送信することを指定
-    meta->header_len = sizeof(tnc_meta_header_t);
-    meta->payload_len = len;
-    meta->port_id = port->id;
-
-    // データ本体をコピー
-    memcpy(tmp_buf + sizeof(tnc_meta_header_t), payload, len);
-
-    // 送信タスクへ渡すリングバッファ (ax25_packet_queue) へ投入
-    // ※ send_tx は No-Split モードで作成されていること
-    xRingbufferSend(port->send_tx, tmp_buf, total_len, 0);
 }
 
 void pc_port_task(void *pvParameters)
