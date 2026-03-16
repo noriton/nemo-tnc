@@ -44,10 +44,11 @@ void tnc_init(void)
     tnc_pc_ports_init();
 
     // 起動バナー（mycall_list は tnc_pc_ports_init() 内で NVS から復元済み）
-    extern char mycall_list[MAX_MYCALL_LIST][16];
+    extern char mycall_list[2][MAX_MYCALL_LIST][16];
     ESP_LOGI("TNC", "********************************");
-    ESP_LOGI("TNC", "  NEMO-TNC Starting...         ");
-    ESP_LOGI("TNC", "  Callsign: %s                 ", mycall_list[0]);
+    ESP_LOGI("TNC", "  NEMO-TNC By JH1FBM           ");
+    ESP_LOGI("TNC", "             Starting...       ");
+    ESP_LOGI("TNC", "  Callsign: %s                 ", mycall_list[0][0]);
     ESP_LOGI("TNC", "********************************");
 
     // その他のTNC全体の初期化処理があればここに追加

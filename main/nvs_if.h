@@ -22,9 +22,9 @@ esp_err_t nvs_save_mycall(const char* callsign);
 esp_err_t nvs_save_port_mode(int port_id, int portmode);
 esp_err_t nvs_load_port_mode(int *portmode, int port_id, int default_mode);
 
-// MYCALLリスト用
-esp_err_t nvs_save_mycall_list_item(int index, const char* callsign);
-esp_err_t nvs_load_mycall_list(char list[MAX_MYCALL_LIST][16]);
+// MYCALLリスト用（ポートごとに独立したリストを管理）
+esp_err_t nvs_save_mycall_list_item(int port_id, int index, const char* callsign);
+esp_err_t nvs_load_mycall_list(int port_id, char list[MAX_MYCALL_LIST][16]);
 
 // ポートごとの使用MYCALLインデックス用
 esp_err_t nvs_save_port_mycall_idx(int port_id, int idx);

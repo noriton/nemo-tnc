@@ -17,8 +17,8 @@ static const char *NVS_NAMESPACE = "tnc_settings";
 //   将来的に単一コールサイン設定 API として再利用する場合に備え残存。
 esp_err_t nvs_save_mycall(const char* callsign)
 {
-    // リストの先頭（インデックス0）に保存する
-    return nvs_save_mycall_list_item(0, callsign);
+    // port0 リストの先頭（インデックス0）に保存する
+    return nvs_save_mycall_list_item(0, 0, callsign);
 }
 
 #define UNUSED
@@ -68,7 +68,8 @@ esp_err_t nvs_load_mycall(char* buf, size_t max_len)
 }
 #endif
 
-esp_err_t nvs_save_mycall_list_item(int index, const char* callsign)
+// NVSキー形式: "p{port_id}_mc_{index}"  例: "p0_mc_0", "p1_mc_7" (最大9文字)
+esp_err_t nvs_save_mycall_list_item(int port_id, int index, const char* callsign)
 {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open("tnc_settings", NVS_READWRITE, &my_handle);
@@ -77,7 +78,7 @@ esp_err_t nvs_save_mycall_list_item(int index, const char* callsign)
     }
 
     char key[16];
-    snprintf(key, sizeof(key), "mycall_%d", index);
+    snprintf(key, sizeof(key), "p%d_mc_%d", port_id, index);
     err = nvs_set_str(my_handle, key, callsign);
 
     if (err == ESP_OK) {
@@ -87,7 +88,7 @@ esp_err_t nvs_save_mycall_list_item(int index, const char* callsign)
     return err;
 }
 
-esp_err_t nvs_load_mycall_list(char list[MAX_MYCALL_LIST][16])
+esp_err_t nvs_load_mycall_list(int port_id, char list[MAX_MYCALL_LIST][16])
 {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open("tnc_settings", NVS_READONLY, &my_handle);
@@ -97,7 +98,7 @@ esp_err_t nvs_load_mycall_list(char list[MAX_MYCALL_LIST][16])
 
     for (int i = 0; i < MAX_MYCALL_LIST; i++) {
         char key[16];
-        snprintf(key, sizeof(key), "mycall_%d", i);
+        snprintf(key, sizeof(key), "p%d_mc_%d", port_id, i);
         size_t len = 16;
         // 取得できなくてもエラーにせず、初期値を維持する
         nvs_get_str(my_handle, key, list[i], &len);

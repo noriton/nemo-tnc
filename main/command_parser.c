@@ -55,7 +55,7 @@ static int cmd_uimode(int argc, char **argv)
 }
 
 // --- MYCALL コマンドで参照する外部変数 ---
-extern char mycall_list[MAX_MYCALL_LIST][16];
+extern char mycall_list[2][MAX_MYCALL_LIST][16];
 extern tnc_port_info_t pc_ports[];
 
 #define MYCALL_DEFAULT "N0CALL-0"
@@ -82,7 +82,7 @@ static int mycall_do_set(tnc_port_info_t *port, const char *callsign_arg, const 
     } else if (strcmp(slot_arg, "-") == 0) {
         slot = -1;
         for (int i = 0; i < MAX_MYCALL_LIST; i++) {
-            if (strcmp(mycall_list[i], MYCALL_DEFAULT) == 0) {
+            if (strcmp(mycall_list[port->id][i], MYCALL_DEFAULT) == 0) {
                 slot = i;
                 break;
             }
@@ -103,10 +103,10 @@ static int mycall_do_set(tnc_port_info_t *port, const char *callsign_arg, const 
         nvs_save_port_mycall_idx(port->id, slot);
     }
 
-    strncpy(mycall_list[slot], callsign_buf, sizeof(mycall_list[slot]) - 1);
-    mycall_list[slot][sizeof(mycall_list[slot]) - 1] = '\0';
-    nvs_save_mycall_list_item(slot, mycall_list[slot]);
-    cmd_response("Saved [%d]: %s\r\n", slot, mycall_list[slot]);
+    strncpy(mycall_list[port->id][slot], callsign_buf, sizeof(mycall_list[port->id][slot]) - 1);
+    mycall_list[port->id][slot][sizeof(mycall_list[port->id][slot]) - 1] = '\0';
+    nvs_save_mycall_list_item(port->id, slot, mycall_list[port->id][slot]);
+    cmd_response("Saved [%d]: %s\r\n", slot, mycall_list[port->id][slot]);
     return 0;
 }
 
@@ -121,16 +121,16 @@ static int cmd_mycall(int argc, char **argv)
     // 引数なし: 現在のポートに割り当てられている MYCALL を表示
     if (argc < 2) {
         int idx = port->mycall_idx;
-        cmd_response("\r\nMYCALL[%d]: %s\r\n", idx, mycall_list[idx]);
+        cmd_response("\r\nMYCALL[%d]: %s\r\n", idx, mycall_list[port->id][idx]);
         return 0;
     }
 
     // --- list サブコマンド ---
     if (strcasecmp(argv[1],"list") == 0) {
         cmd_response("\r\nPort %d -> slot %d (%s)\r\n", port->id, port->mycall_idx,
-                     mycall_list[port->mycall_idx]);
+                     mycall_list[port->id][port->mycall_idx]);
         for (int i = 0; i < MAX_MYCALL_LIST; i++) {
-            cmd_response("  [%d] %s\r\n", i, mycall_list[i]);
+            cmd_response("  [%d] %s\r\n", i, mycall_list[port->id][i]);
         }
         return 0;
     }
@@ -158,7 +158,7 @@ static int cmd_mycall(int argc, char **argv)
         port->mycall_idx = slot;
         nvs_save_port_mycall_idx(port->id, slot);
         cmd_response("Port %d -> slot %d (%s)\r\n", port->id, slot,
-                     mycall_list[slot]);
+                     mycall_list[port->id][slot]);
         return 0;
     }
 
@@ -173,9 +173,9 @@ static int cmd_mycall(int argc, char **argv)
             cmd_response("Error: Slot must be 0-%d.\r\n", MAX_MYCALL_LIST - 1);
             return 1;
         }
-        strncpy(mycall_list[slot], MYCALL_DEFAULT, sizeof(mycall_list[slot]) - 1);
-        mycall_list[slot][sizeof(mycall_list[slot]) - 1] = '\0';
-        nvs_save_mycall_list_item(slot, mycall_list[slot]);
+        strncpy(mycall_list[port->id][slot], MYCALL_DEFAULT, sizeof(mycall_list[port->id][slot]) - 1);
+        mycall_list[port->id][slot][sizeof(mycall_list[port->id][slot]) - 1] = '\0';
+        nvs_save_mycall_list_item(port->id, slot, mycall_list[port->id][slot]);
         cmd_response("Deleted [%d]\r\n", slot);
         return 0;
     }
@@ -362,7 +362,7 @@ void send_prompt(tnc_port_info_t *port)
 {
     char base[7];
     int  ssid;
-    callsign_to_ax25(mycall_list[port->mycall_idx], base, &ssid);
+    callsign_to_ax25(mycall_list[port->id][port->mycall_idx], base, &ssid);
 
     char prompt[32];
     if (ssid == 0) {
@@ -463,6 +463,7 @@ void command_parser_init(void)
 static const esp_console_cmd_t s_cmds[] = {
     {"version", "Show version",                     NULL,          &cmd_version, NULL},
     {"mycall",  "Manage and select MYCALL",          NULL,          &cmd_mycall,  NULL},
+    {"my",      "Alias for mycall",                  NULL,          &cmd_mycall,  NULL},
     {"testtx",  "Send test packet",                  "[message]",   &cmd_testtx,  NULL},
     {"uisend",  "Send UI information",               "<call>",      &cmd_uisend,  NULL},
     {"uimode",  "Set UI mode",                       "<mode>",      &cmd_uimode,  NULL},

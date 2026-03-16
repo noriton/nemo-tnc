@@ -23,10 +23,13 @@ int master_console_port = 0;
 static const char *TAG = "PC_PORT";
 #define GUARD_TIME pdMS_TO_TICKS(1000)
 
-// 8枠分の初期値を用意
-char mycall_list[MAX_MYCALL_LIST][16] = {"N0CALL-0", "N0CALL-0", "N0CALL-0",
-                                         "N0CALL-0", "N0CALL-0", "N0CALL-0",
-                                         "N0CALL-0", "N0CALL-0"};
+// ポートごとに独立した8枠のMYCALLリスト
+char mycall_list[MAX_PORTS][MAX_MYCALL_LIST][16] = {
+    {"N0CALL-0", "N0CALL-0", "N0CALL-0", "N0CALL-0",
+     "N0CALL-0", "N0CALL-0", "N0CALL-0", "N0CALL-0"}, // port0
+    {"N0CALL-0", "N0CALL-0", "N0CALL-0", "N0CALL-0",
+     "N0CALL-0", "N0CALL-0", "N0CALL-0", "N0CALL-0"}, // port1
+};
 
 /**
  * 現在のポートがマスターコンソールか判定する
@@ -59,10 +62,9 @@ void system_notify(const char *fmt, ...)
 
 void tnc_pc_ports_init(void)
 {
-    // MYCALLリストをNVSから復元
-    nvs_load_mycall_list(mycall_list);
-
     for (int i = 0; i < MAX_PORTS; i++) {
+        // ポートごとの MYCALLリストを NVS から復元
+        nvs_load_mycall_list(i, mycall_list[i]);
         pc_ports[i].id = i;
         //        pc_ports[i].mode = PORT_MODE_COMMAND; //
         //        初期状態はどちらもコマンドモード
