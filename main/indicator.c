@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h" // 時刻取得用
+#include "nvs_if.h"
 
 #define LED_STRIP_GPIO       4
 #define LED_STRIP_BLINK_GPIO  4
@@ -43,6 +44,7 @@ void indicator_set_forced_off(int off)
         led_forced_off = 0;
         current_state = state_before_off;
     }
+    nvs_save_led_forced_off(led_forced_off);
 }
 
 // LEDを制御する独立したタスク
@@ -108,6 +110,14 @@ static void indicator_task(void *pvParameters)
 
 void indicator_init(void)
 {
+    // NVSからLED強制消灯状態を復元
+    int saved_off = 0;
+    nvs_load_led_forced_off(&saved_off);
+    if (saved_off) {
+        led_forced_off = 1;
+        current_state = TNC_ST_OFF;
+    }
+
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_STRIP_BLINK_GPIO,
         .max_leds = LED_STRIP_MAX_LEDS,

@@ -30,6 +30,10 @@ esp_err_t nvs_load_mycall_list(char list[MAX_MYCALL_LIST][16]);
 esp_err_t nvs_save_port_mycall_idx(int port_id, int idx);
 esp_err_t nvs_load_port_mycall_idx(int port_id, int *idx, int default_idx);
 
+// LED強制消灯状態
+esp_err_t nvs_save_led_forced_off(int off);
+esp_err_t nvs_load_led_forced_off(int *off);
+
 /**
  * ポートごとのデフォルトモードを保存
  * @param port_id ポート番号

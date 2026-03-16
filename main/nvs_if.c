@@ -202,6 +202,30 @@ esp_err_t nvs_load_port_mode(int *portmode, int port_id, int default_mode)
             }
         }
     }
-    
+
+    return ESP_OK;
+}
+
+esp_err_t nvs_save_led_forced_off(int off)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_i8(h, "led_off", (int8_t)off);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t nvs_load_led_forced_off(int *off)
+{
+    *off = 0; // デフォルト: 通常点灯
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    int8_t val = 0;
+    err = nvs_get_i8(h, "led_off", &val);
+    if (err == ESP_OK) *off = (int)val;
+    nvs_close(h);
     return ESP_OK;
 }
