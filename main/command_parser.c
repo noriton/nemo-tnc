@@ -197,16 +197,14 @@ static int cmd_mycall(int argc, char **argv)
 
     // --- help サブコマンド ---
     if (strcasecmp(argv[1],"help") == 0) {
-        cmd_response(
-            "\r\nmycall subcommands:\r\n"
-            "  (none)                  Show current MYCALL\r\n"
-            "  help                    Show this help\r\n"
-            "  list                    List all MYCALL slots\r\n"
-            "  set <CALL> [0-7|-]      Save callsign to slot\r\n"
-            "  use <0-7>               Switch active slot\r\n"
-            "  del <0-7>               Reset slot to default\r\n"
-            "  <CALL> [0-7|-]          Shorthand for set\r\n"
-        );
+        cmd_response("\r\nmycall subcommands:\r\n");
+        cmd_response("  (none)               Show current MYCALL\r\n");
+        cmd_response("  help                 Show this help\r\n");
+        cmd_response("  list                 List all MYCALL slots\r\n");
+        cmd_response("  set <CALL> [0-7|-]   Save callsign to slot\r\n");
+        cmd_response("  use <0-7>            Switch active slot\r\n");
+        cmd_response("  del <0-7>            Reset slot to default\r\n");
+        cmd_response("  <CALL> [0-7|-]       Shorthand for set\r\n");
         return 0;
     }
 
