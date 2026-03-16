@@ -11,11 +11,90 @@
 #include <string.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 static const char *TAG = "RAWPKT";
 
 // 生パケット出力用リングバッファ（NOSPLIT: 1アイテム = 1パケット）
 RingbufHandle_t raw_tx_buf = NULL;
+
+
+// ---------------------------------------------------------------------------
+// AX.25アドレスフィールド解析（KISS由来パケット用）
+// ---------------------------------------------------------------------------
+
+/**
+ * AX.25フレーム先頭のアドレスフィールドを解析し、meta の各フィールドに格納する。
+ *
+ * @param frame     AX.25フレーム先頭ポインタ（KISSペイロード）
+ * @param frame_len フレーム長
+ * @param meta      結果を格納するメタデータヘッダ（dest_call/src_call/digi_* を上書き）
+ * @return アドレスフィールド終端位置（Control byte の直前）、解析失敗時は 0
+ */
+static size_t parse_ax25_addr_to_meta(const uint8_t *frame, size_t frame_len,
+                                       tnc_meta_header_t *meta)
+{
+    // 最低: Dest(7) + Src(7) + Control(1) + PID(1) = 16 bytes
+    if (frame == NULL || meta == NULL || frame_len < 16) {
+        return 0;
+    }
+
+    size_t pos = 0;
+
+    // 1. Destination Address
+    {
+        char base[7] = {0};
+        uint8_t ssid = 0;
+        decode_callsign(&frame[pos], base, &ssid);
+        if (ssid > 0) {
+            snprintf(meta->dest_call, sizeof(meta->dest_call), "%s-%d", base, ssid);
+        } else {
+            snprintf(meta->dest_call, sizeof(meta->dest_call), "%s", base);
+        }
+    }
+    pos += AX25_ADDR_LEN;
+
+    // 2. Source Address
+    //    SSID バイトの bit0 = 0 のとき後続アドレスあり（デジピータ）
+    bool src_is_last = (frame[pos + 6] & 0x01) != 0;
+    {
+        char base[7] = {0};
+        uint8_t ssid = 0;
+        decode_callsign(&frame[pos], base, &ssid);
+        if (ssid > 0) {
+            snprintf(meta->src_call, sizeof(meta->src_call), "%s-%d", base, ssid);
+        } else {
+            snprintf(meta->src_call, sizeof(meta->src_call), "%s", base);
+        }
+    }
+    pos += AX25_ADDR_LEN;
+
+    // 3. Digipeater Addresses（is_last bit が立つまで繰り返し）
+    meta->digi_count = 0;
+    memset(meta->digi, 0, sizeof(meta->digi));
+    while (!src_is_last && (pos + AX25_ADDR_LEN) <= frame_len) {
+        bool is_last  = (frame[pos + 6] & 0x01) != 0;
+        bool has_been = (frame[pos + 6] & 0x80) != 0; // H-bit
+
+        if (meta->digi_count < TNC_META_MAX_DIGI) {
+            char base[7] = {0};
+            uint8_t ssid = 0;
+            decode_callsign(&frame[pos], base, &ssid);
+            tnc_meta_digi_t *d = &meta->digi[meta->digi_count];
+            if (ssid > 0) {
+                snprintf(d->call, sizeof(d->call), "%s-%d", base, ssid);
+            } else {
+                snprintf(d->call, sizeof(d->call), "%s", base);
+            }
+            d->has_been = has_been ? 1 : 0;
+            meta->digi_count++;
+        }
+        pos += AX25_ADDR_LEN;
+        if (is_last) break;
+    }
+
+    return pos; // Control byte の直前位置
+}
 
 
 // ---------------------------------------------------------------------------
@@ -160,10 +239,40 @@ static void rawpacket_task(void *pvParameters)
             break;
         }
 
-        case META_TYPE_DATA_KISS:
-            // TODO: KISS由来パケット処理（保留）
-            ESP_LOGD(TAG, "Port%d: KISS type not yet implemented", port_id);
+        case META_TYPE_DATA_KISS: {
+            // KISSペイロード = PC から受け取った AX.25 フレーム（FCSなし）
+            // アドレスフィールドを解析してメタに展開し、raw_tx_buf へ転送する
+            size_t ax25_len = (size_t)meta->payload_len;
+            if (ax25_len == 0 || ax25_len > RAW_PACKET_MAX_LEN) {
+                ESP_LOGW(TAG, "Port%d: KISS invalid payload len %u",
+                         port_id, (unsigned)ax25_len);
+                break;
+            }
+
+            tnc_meta_header_t updated_meta = *meta;
+            size_t ctrl_pos = parse_ax25_addr_to_meta(payload, ax25_len, &updated_meta);
+            if (ctrl_pos == 0) {
+                ESP_LOGW(TAG, "Port%d: KISS AX.25 addr parse failed", port_id);
+                break;
+            }
+
+            ESP_LOGD(TAG, "Port%d: KISS src=%s dst=%s digi=%d",
+                     port_id, updated_meta.src_call, updated_meta.dest_call,
+                     updated_meta.digi_count);
+
+            if (raw_tx_buf != NULL) {
+                raw_tx_item_t out;
+                out.meta             = updated_meta;
+                out.meta.payload_len = (uint16_t)ax25_len;
+                memcpy(out.data, payload, ax25_len);
+                BaseType_t res = xRingbufferSend(
+                    raw_tx_buf, &out, RAW_TX_ITEM_SIZE(ax25_len), pdMS_TO_TICKS(10));
+                if (res != pdTRUE) {
+                    ESP_LOGW(TAG, "Port%d: raw_tx_buf full, KISS packet dropped", port_id);
+                }
+            }
             break;
+        }
 
         default:
             ESP_LOGW(TAG, "Port%d: unknown meta type %d", port_id, meta->type);
