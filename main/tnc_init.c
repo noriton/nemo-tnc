@@ -20,6 +20,7 @@
 #include "nvs_flash.h"
 #include "nvs_if.h"
 #include "rx_frame.h"
+#include "rawpacket.h"
 
 char mycall[16] = "N0CALL"; // デフォルトコールサイン
 
@@ -53,6 +54,8 @@ void tnc_init(void)
 
 
     // その他のTNC全体の初期化処理があればここに追加
+
+    rawpacket_init(); // L3生パケット生成タスク起動
 
     rx_frame_init(); // RXフレーム受信タスク起動 (現状はLoopback/Debug用)
 

@@ -21,8 +21,9 @@ void tnc_buffer_init(void)
     rx_ringbuf[0] = xRingbufferCreate(2048, RINGBUF_TYPE_BYTEBUF);
     rx_ringbuf[1] = xRingbufferCreate(2048, RINGBUF_TYPE_BYTEBUF);
 
-    tx_ringbuf[0] = xRingbufferCreate(4096, RINGBUF_TYPE_BYTEBUF);
-    tx_ringbuf[1] = xRingbufferCreate(4096, RINGBUF_TYPE_BYTEBUF);
+    // NOSPLIT: 1アイテム = 1パケット（メタヘッダ + ペイロード境界を保証）
+    tx_ringbuf[0] = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
+    tx_ringbuf[1] = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
 
     if (usb_from_pc[0] == NULL || usb_from_pc[1] == NULL 
         || usb_to_pc[0] == NULL || usb_to_pc[1] == NULL 

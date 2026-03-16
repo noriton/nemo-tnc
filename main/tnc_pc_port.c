@@ -481,17 +481,18 @@ void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len, char
     size_t total_len = header_len + len;
 
     // スタックバッファ
-    uint8_t send_tmp[KISS_MAX_RAW_LEN + 32];
+    uint8_t send_tmp[sizeof(tnc_meta_header_t) + KISS_MAX_RAW_LEN];
     if (total_len > sizeof(send_tmp))
         return;
 
     tnc_meta_header_t *meta = (tnc_meta_header_t *)send_tmp;
-    meta->version = TNC_META_VERSION_1;
-    meta->type = META_TYPE_DATA_UI; // UIフレーム種別
+    // 未使用フィールド（digi等）を含め全てゼロ初期化
+    memset(meta, 0, sizeof(tnc_meta_header_t));
+    meta->version    = TNC_META_VERSION_1;
+    meta->type       = META_TYPE_DATA_UI; // UIフレーム種別
     meta->header_len = (uint16_t)header_len;
     meta->payload_len = (uint16_t)len;
-    meta->port_id = (uint8_t)port->id;
-    meta->reserved = 0;
+    meta->port_id    = (uint8_t)port->id;
 
     if (dest_call != NULL) {
         strncpy(meta->dest_call, dest_call, sizeof(meta->dest_call) - 1);

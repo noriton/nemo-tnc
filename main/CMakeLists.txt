@@ -15,6 +15,7 @@ idf_component_register(SRCS
     "frame_metadata.c"
     "kiss_parser.c"
     "callsign.c"
+    "rawpacket.c"
 INCLUDE_DIRS "."
 PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console
 )

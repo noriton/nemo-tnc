@@ -36,19 +36,18 @@ void kiss_process_stream(kiss_context_t *ctx, const uint8_t *data, size_t len, i
                     size_t total_len = header_len + payload_len;
 
                     // スタック上に送信用の連結バッファを確保
-                    // KISS_MAX_RAW_LEN + ヘッダサイズ を許容できるサイズ
-                    uint8_t send_tmp[KISS_MAX_RAW_LEN + 32]; 
+                    uint8_t send_tmp[sizeof(tnc_meta_header_t) + KISS_MAX_RAW_LEN];
 
                     if (total_len <= sizeof(send_tmp)) {
                         tnc_meta_header_t *meta = (tnc_meta_header_t *)send_tmp;
-                        
-                        // メタデータヘッダの構築
+
+                        // メタデータヘッダの構築（未使用フィールドを含め全てゼロ初期化）
+                        memset(meta, 0, sizeof(tnc_meta_header_t));
                         meta->version     = TNC_META_VERSION_1;
                         meta->type        = META_TYPE_DATA_KISS;
                         meta->header_len  = (uint16_t)header_len;
                         meta->payload_len = (uint16_t)payload_len;
                         meta->port_id     = (uint8_t)port_id;
-                        meta->reserved    = 0;
 
                         // ペイロード（AX.25パケット本体）をヘッダの直後にコピー
                         memcpy(send_tmp + header_len, &ctx->buf[1], payload_len);
