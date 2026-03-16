@@ -34,6 +34,10 @@ esp_err_t nvs_load_port_mycall_idx(int port_id, int *idx, int default_idx);
 esp_err_t nvs_save_led_forced_off(int off);
 esp_err_t nvs_load_led_forced_off(int *off);
 
+// コマンドヒストリ（ポートごとに独立保存）
+esp_err_t nvs_save_history(int port_id, char history[CMD_HISTORY_SIZE][256], int hist_head, int hist_count);
+esp_err_t nvs_load_history(int port_id, char history[CMD_HISTORY_SIZE][256], int *hist_head, int *hist_count);
+
 /**
  * ポートごとのデフォルトモードを保存
  * @param port_id ポート番号

@@ -2,6 +2,7 @@
 #include "ax25.h"
 #include "esp_console.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs_if.h"
 #include "tx_frame.h"
 #include "indicator.h"
@@ -9,6 +10,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
+// ヒストリNVS保存の間引き制御（ポートごと）
+#define HIST_SAVE_INTERVAL_US  (3LL * 60 * 1000000LL) // 3分
+static int     hist_dirty[2]         = {0, 0};
+static int64_t hist_last_save_us[2]  = {0, 0};
+
+// メモリ上の最新ヒストリを NVS にコミットする（dirty な場合のみ書き込む）
+void history_commit(tnc_port_info_t *port)
+{
+    if (!hist_dirty[port->id]) return;
+    nvs_save_history(port->id, port->history, port->hist_head, port->hist_count);
+    hist_dirty[port->id]        = 0;
+    hist_last_save_us[port->id] = esp_timer_get_time();
+}
 
 
 
@@ -302,6 +317,13 @@ static void hist_push(tnc_port_info_t *port, const char *cmd)
     port->history[port->hist_head][sizeof(port->history[0]) - 1] = '\0';
     port->hist_head = (port->hist_head + 1) % CMD_HISTORY_SIZE;
     if (port->hist_count < CMD_HISTORY_SIZE) port->hist_count++;
+
+    // dirty フラグを立て、3分経過していればコミット
+    hist_dirty[port->id] = 1;
+    int64_t now = esp_timer_get_time();
+    if ((now - hist_last_save_us[port->id]) >= HIST_SAVE_INTERVAL_US) {
+        history_commit(port);
+    }
 }
 
 // 現在の入力行を消去して str を表示

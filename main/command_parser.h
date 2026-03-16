@@ -32,4 +32,11 @@ void command_parser_init(void);
  */
 void send_prompt(tnc_port_info_t *port);
 
+/**
+ * @brief メモリ上の最新ヒストリを NVS にコミットする
+ * dirty フラグが立っている場合のみ書き込む。
+ * モード遷移・シャットダウン時など明示的に保存したい場面で呼ぶ。
+ */
+void history_commit(tnc_port_info_t *port);
+
 #endif // COMMAND_PARSER_H

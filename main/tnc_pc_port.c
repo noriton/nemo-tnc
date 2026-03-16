@@ -102,6 +102,11 @@ void tnc_pc_ports_init(void)
         // ポートのMYCALLインデックスをNVSから復元（未保存ならポートIDをデフォルトに）
         nvs_load_port_mycall_idx(i, &pc_ports[i].mycall_idx, i);
 
+        // コマンドヒストリをNVSから復元
+        pc_ports[i].hist_pos = -1; // ブラウズ中でない状態で初期化
+        nvs_load_history(i, pc_ports[i].history,
+                         &pc_ports[i].hist_head, &pc_ports[i].hist_count);
+
         kiss_init(&(pc_ports[i].kiss_ctx)); // KISSパーサのコンテキスト初期化
         // タスク起動
         char task_name[16];

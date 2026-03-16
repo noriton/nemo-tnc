@@ -236,3 +236,70 @@ esp_err_t nvs_load_led_forced_off(int *off)
     nvs_close(h);
     return ESP_OK;
 }
+
+// ---------------------------------------------------------------------------
+// コマンドヒストリ
+// NVSキー: "p{port}_hcnt"（件数）, "p{port}_h{i}"（エントリ、i=0が最古）
+// ---------------------------------------------------------------------------
+
+esp_err_t nvs_save_history(int port_id, char history[CMD_HISTORY_SIZE][256],
+                            int hist_head, int hist_count)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+
+    // 件数を保存
+    char key_cnt[16];
+    snprintf(key_cnt, sizeof(key_cnt), "p%d_hcnt", port_id);
+    err = nvs_set_i8(h, key_cnt, (int8_t)hist_count);
+    if (err != ESP_OK) { nvs_close(h); return err; }
+
+    // エントリを古い順（i=0: 最古）で保存
+    for (int i = 0; i < hist_count; i++) {
+        int slot = (hist_head - hist_count + i + CMD_HISTORY_SIZE * 2) % CMD_HISTORY_SIZE;
+        char key[16];
+        snprintf(key, sizeof(key), "p%d_h%d", port_id, i);
+        nvs_set_str(h, key, history[slot]);
+    }
+
+    nvs_commit(h);
+    nvs_close(h);
+    return ESP_OK;
+}
+
+esp_err_t nvs_load_history(int port_id, char history[CMD_HISTORY_SIZE][256],
+                            int *hist_head, int *hist_count)
+{
+    *hist_head  = 0;
+    *hist_count = 0;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+
+    // 件数を取得
+    char key_cnt[16];
+    snprintf(key_cnt, sizeof(key_cnt), "p%d_hcnt", port_id);
+    int8_t cnt = 0;
+    err = nvs_get_i8(h, key_cnt, &cnt);
+    if (err != ESP_OK || cnt <= 0) { nvs_close(h); return ESP_OK; }
+    if (cnt > CMD_HISTORY_SIZE) cnt = CMD_HISTORY_SIZE;
+
+    // エントリを古い順にスロット 0..cnt-1 へ復元
+    int loaded = 0;
+    for (int i = 0; i < cnt; i++) {
+        char key[16];
+        snprintf(key, sizeof(key), "p%d_h%d", port_id, i);
+        size_t len = 256;
+        if (nvs_get_str(h, key, history[i], &len) == ESP_OK) {
+            loaded++;
+        }
+    }
+
+    *hist_count = loaded;
+    *hist_head  = loaded % CMD_HISTORY_SIZE;
+
+    nvs_close(h);
+    return ESP_OK;
+}
