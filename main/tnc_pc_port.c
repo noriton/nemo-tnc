@@ -92,6 +92,8 @@ void tnc_pc_ports_init(void)
 
         pc_ports[i].from_pc = usb_from_pc[i];
         pc_ports[i].to_pc = usb_to_pc[i]; // PCへの送信(戻り）用リングバッファ
+        pc_ports[i].send_tx = tx_ringbuf[i]; // ToDo：リネーム検討
+        pc_ports[i].recv_rx = rx_ringbuf[i]; // ToDo：リネーム検討
 
         pc_ports[i].line_pos = 0;
 
