@@ -73,6 +73,16 @@ typedef struct tnc_port_info {
     // --- コマンド/チャットモード用のバッファと状態 ---  
     char line_buf[256];        // コマンド,チャット用の一行バッファ
     int line_pos;
+    // --- コマンドヒストリ ---
+#define CMD_HISTORY_SIZE 8
+    char history[CMD_HISTORY_SIZE][256]; // 循環バッファ
+    int  hist_head;    // 次に書き込む位置
+    int  hist_count;   // 保存済みエントリ数
+    int  hist_pos;     // ブラウズ位置 (-1=ブラウズ中でない)
+    char hist_saved[256]; // ブラウズ開始時の入力を退避
+    int  hist_saved_pos;
+    uint8_t ansi_state;   // ANSIエスケープ解析状態 (0=通常 1=ESC受信 2=ESC[受信)
+
     // --- トランスペアレントモード用に追加 ---
     uint8_t trans_buf[TNC_PACLEN]; // 送信待ちデータバッファ
     int trans_len;                 // 現在溜まっているバイト数

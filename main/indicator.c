@@ -62,16 +62,16 @@ static void indicator_task(void *pvParameters)
 
             case TNC_ST_IDLE:
                 // 呼吸（フェードイン・アウト）
-                for (int i = 2; i < 20; i++) {
+                for (int i = 2; i < 11; i++) {
                     led_strip_set_pixel(led_strip, 0, i, 0, i);
                     led_strip_refresh(led_strip);
-                    vTaskDelay(pdMS_TO_TICKS(50));
+                    vTaskDelay(pdMS_TO_TICKS(200));
                     if (current_state != TNC_ST_IDLE) break;
                 }
-                for (int i = 20; i >= 2; i--) {
+                for (int i = 10; i >= 2; i--) {
                     led_strip_set_pixel(led_strip, 0, i, 0, i);
                     led_strip_refresh(led_strip);
-                    vTaskDelay(pdMS_TO_TICKS(50));
+                    vTaskDelay(pdMS_TO_TICKS(200));
                     if (current_state != TNC_ST_IDLE) break;
                 }
                 break;
@@ -80,14 +80,14 @@ static void indicator_task(void *pvParameters)
                 // 受信中はパチパチ光る
                 led_strip_set_pixel(led_strip, 0, 0, 50, 0);
                 led_strip_refresh(led_strip);
-                vTaskDelay(pdMS_TO_TICKS(30));
+                vTaskDelay(pdMS_TO_TICKS(50));
                 led_strip_set_pixel(led_strip, 0, 0, 0, 0);
                 led_strip_refresh(led_strip);
-                vTaskDelay(pdMS_TO_TICKS(30));
+                vTaskDelay(pdMS_TO_TICKS(50));
                 
                 int64_t now = esp_timer_get_time();
-                // 500,000μs = 500ms 以上経過していたらIDLEへ
-                if ((now - last_rx_time) > 500000) {
+                // 200,000μs = 200ms 以上経過していたらIDLEへ
+                if ((now - last_rx_time) > 200000) {
                     current_state = TNC_ST_IDLE;
                 }
                 break;

@@ -13,6 +13,7 @@
 
 
 static void register_commands(void);
+static int cmd_help(int argc, char **argv);
 
 static SemaphoreHandle_t console_mutex = NULL;
 
@@ -282,6 +283,77 @@ int cmd_uisend(int argc, char **argv)
     return 0;
 }
 
+// --- コマンドヒストリ操作 ---
+
+// コマンドをヒストリに追加（連続重複は無視）
+static void hist_push(tnc_port_info_t *port, const char *cmd)
+{
+    if (cmd[0] == '\0') return;
+
+    // 直前と同じコマンドは登録しない
+    if (port->hist_count > 0) {
+        int prev = (port->hist_head - 1 + CMD_HISTORY_SIZE) % CMD_HISTORY_SIZE;
+        if (strcmp(port->history[prev], cmd) == 0) return;
+    }
+
+    strncpy(port->history[port->hist_head], cmd, sizeof(port->history[0]) - 1);
+    port->history[port->hist_head][sizeof(port->history[0]) - 1] = '\0';
+    port->hist_head = (port->hist_head + 1) % CMD_HISTORY_SIZE;
+    if (port->hist_count < CMD_HISTORY_SIZE) port->hist_count++;
+}
+
+// 現在の入力行を消去して str を表示
+static void hist_redraw(tnc_port_info_t *port, const char *str)
+{
+    // バックスペースで現在の入力を消す
+    for (int i = 0; i < port->line_pos; i++) {
+        xRingbufferSend(port->to_pc, (uint8_t *)"\b \b", 3, 0);
+    }
+    size_t len = strlen(str);
+    if (len >= sizeof(port->line_buf)) len = sizeof(port->line_buf) - 1;
+    memcpy(port->line_buf, str, len);
+    port->line_buf[len] = '\0';
+    port->line_pos = (int)len;
+    xRingbufferSend(port->to_pc, (uint8_t *)str, len, 0);
+}
+
+// ヒストリを古い方向へ（上キー）
+static void hist_up(tnc_port_info_t *port)
+{
+    if (port->hist_count == 0) return;
+
+    if (port->hist_pos == -1) {
+        // 現在の入力を退避してブラウズ開始
+        strncpy(port->hist_saved, port->line_buf, sizeof(port->hist_saved) - 1);
+        port->hist_saved[sizeof(port->hist_saved) - 1] = '\0';
+        port->hist_saved_pos = port->line_pos;
+        port->hist_pos = 0;
+    } else if (port->hist_pos < port->hist_count - 1) {
+        port->hist_pos++;
+    } else {
+        return; // 最古に達している
+    }
+
+    int idx = (port->hist_head - 1 - port->hist_pos + CMD_HISTORY_SIZE * 2) % CMD_HISTORY_SIZE;
+    hist_redraw(port, port->history[idx]);
+}
+
+// ヒストリを新しい方向へ（下キー）
+static void hist_down(tnc_port_info_t *port)
+{
+    if (port->hist_pos == -1) return;
+
+    if (port->hist_pos > 0) {
+        port->hist_pos--;
+        int idx = (port->hist_head - 1 - port->hist_pos + CMD_HISTORY_SIZE * 2) % CMD_HISTORY_SIZE;
+        hist_redraw(port, port->history[idx]);
+    } else {
+        // 最新より新しい → 退避した入力に戻す
+        port->hist_pos = -1;
+        hist_redraw(port, port->hist_saved);
+    }
+}
+
 // --- コマンド解析ロジック ---
 
 void send_prompt(tnc_port_info_t *port)
@@ -309,12 +381,29 @@ void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len)
 
         if (c == '\n') continue;
 
-        if (c == '\r') {
+        // --- ANSIエスケープシーケンス処理 ---
+        if (port->ansi_state == 1) {
+            if (c == '[') { port->ansi_state = 2; continue; }
+            port->ansi_state = 0; // 不明シーケンス → リセット
+        } else if (port->ansi_state == 2) {
+            port->ansi_state = 0;
+            if      (c == 'A') { hist_up(port);   continue; } // 上キー
+            else if (c == 'B') { hist_down(port); continue; } // 下キー
+            continue; // 左右キー等は無視
+        }
+
+        if (c == 0x1B) { // ESC
+            port->ansi_state = 1;
+        } else if (c == '\r') {
             const char *crlf = "\r\n";
             xRingbufferSend(port->to_pc, (uint8_t *)crlf, 2, 0);
+            port->hist_pos = -1; // ブラウズ状態をリセット
 
             if (port->line_pos > 0) {
                 port->line_buf[port->line_pos] = '\0';
+
+                // ヒストリに追加
+                hist_push(port, port->line_buf);
 
                 // コマンド名（最初のトークン）を小文字化
                 for (int j = 0; port->line_buf[j] != '\0' && port->line_buf[j] != ' '; j++) {
@@ -323,12 +412,14 @@ void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len)
 
                 // Mutex で保護して実行
                 if (xSemaphoreTake(console_mutex, pdMS_TO_TICKS(100))) {
-                    // ★ここでTLSにポート情報をセット（リファクタリング適用）
                     vTaskSetThreadLocalStoragePointer(NULL, 0, port);
-
                     int ret;
-                    esp_console_run(port->line_buf, &ret);
+                    esp_err_t err = esp_console_run(port->line_buf, &ret);
                     xSemaphoreGive(console_mutex);
+                    if (err == ESP_ERR_NOT_FOUND) {
+                        cmd_response("Unknown command: %s (type 'help' for list)\r\n",
+                                     port->line_buf);
+                    }
                 } else {
                     const char *busy = "Busy\r\n";
                     xRingbufferSend(port->to_pc, (uint8_t *)busy, strlen(busy), 0);
@@ -337,22 +428,17 @@ void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len)
             // コマンド実行後、バッファをリセットしてプロンプトを表示
             port->line_pos = 0;
             send_prompt(port);
-        } else {
-            // Backspace (0x08) や Delete (0x7F) の対応
-            if (c == 0x08 || c == 0x7F) {
-                if (port->line_pos > 0) {
-                    port->line_pos--;
-                    // 画面上の文字を消すエスケープシーケンス "\b \b"
-                    const char *bs = "\b \b";
-                    xRingbufferSend(port->to_pc, (uint8_t *)bs, 3, 0);
-                }
-            } else if (c >= 0x20 && c <= 0x7E) {
-                // 表示可能文字のみバッファリング
-                if (port->line_pos < sizeof(port->line_buf) - 1) {
-                    port->line_buf[port->line_pos++] = c;
-                    // 入力文字をそのままエコーバック
-                    xRingbufferSend(port->to_pc, &c, 1, 0);
-                }
+        } else if (c == 0x08 || c == 0x7F) {
+            // Backspace / Delete
+            if (port->line_pos > 0) {
+                port->line_pos--;
+                xRingbufferSend(port->to_pc, (uint8_t *)"\b \b", 3, 0);
+            }
+        } else if (c >= 0x20 && c <= 0x7E) {
+            // 表示可能文字のみバッファリング
+            if (port->line_pos < (int)sizeof(port->line_buf) - 1) {
+                port->line_buf[port->line_pos++] = c;
+                xRingbufferSend(port->to_pc, &c, 1, 0);
             }
         }
     }
@@ -372,22 +458,34 @@ void command_parser_init(void)
 
 // --- コマンド登録の初期化 ---
 
+static const esp_console_cmd_t s_cmds[] = {
+    {"version", "Show version",                     NULL,          &cmd_version, NULL},
+    {"mycall",  "Manage and select MYCALL",          NULL,          &cmd_mycall,  NULL},
+    {"testtx",  "Send test packet",                  "[message]",   &cmd_testtx,  NULL},
+    {"uisend",  "Send UI information",               "<call>",      &cmd_uisend,  NULL},
+    {"uimode",  "Set UI mode",                       "<mode>",      &cmd_uimode,  NULL},
+    {"led",     "Control LED (on/off)",              "<on|off>",    &cmd_led,     NULL},
+    {"help",    "Show available commands",           NULL,          &cmd_help,    NULL},
+};
+
+static int cmd_help(int argc, char **argv)
+{
+    cmd_response("\r\nAvailable commands:\r\n");
+    for (int i = 0; i < (int)(sizeof(s_cmds) / sizeof(s_cmds[0])); i++) {
+        if (s_cmds[i].hint) {
+            cmd_response("  %-10s %-16s  %s\r\n",
+                         s_cmds[i].command, s_cmds[i].hint, s_cmds[i].help);
+        } else {
+            cmd_response("  %-10s  %s\r\n",
+                         s_cmds[i].command, s_cmds[i].help);
+        }
+    }
+    return 0;
+}
+
 static void register_commands(void)
 {
-    // --- 標準のヘルプコマンドを登録  ---
-    esp_console_register_help_command();
-
-    // --- その他の自作コマンドを登録 ---
-    const esp_console_cmd_t cmds[] = {
-        {"version", "Show version", NULL, &cmd_version, NULL},
-        {"mycall", "Manage and select MYCALL", NULL, &cmd_mycall, NULL},
-        {"testtx", "Send test packet", "[message]", &cmd_testtx, NULL},
-        {"uisend", "Send UI information", "<call>", &cmd_uisend, NULL},
-        {"uimode", "Set UI mode", "<mode>", &cmd_uimode, NULL},
-        {"led", "Control LED (on/off)", "<on|off>", &cmd_led, NULL},
-    };
-
-    for (int i = 0; i < sizeof(cmds) / sizeof(esp_console_cmd_t); i++) {
-        esp_console_cmd_register(&cmds[i]);
+    for (int i = 0; i < (int)(sizeof(s_cmds) / sizeof(s_cmds[0])); i++) {
+        esp_console_cmd_register(&s_cmds[i]);
     }
 }
