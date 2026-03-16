@@ -195,6 +195,21 @@ static int cmd_mycall(int argc, char **argv)
         return 0;
     }
 
+    // --- help サブコマンド ---
+    if (strcasecmp(argv[1],"help") == 0) {
+        cmd_response(
+            "\r\nmycall subcommands:\r\n"
+            "  (none)                  Show current MYCALL\r\n"
+            "  help                    Show this help\r\n"
+            "  list                    List all MYCALL slots\r\n"
+            "  set <CALL> [0-7|-]      Save callsign to slot\r\n"
+            "  use <0-7>               Switch active slot\r\n"
+            "  del <0-7>               Reset slot to default\r\n"
+            "  <CALL> [0-7|-]          Shorthand for set\r\n"
+        );
+        return 0;
+    }
+
     // --- 暗黙のset: argv[1] が有効なコールサインならsetとして動作 ---
     {
         char tmp[CALLSIGN_BUFSIZE];
@@ -484,8 +499,8 @@ void command_parser_init(void)
 
 static const esp_console_cmd_t s_cmds[] = {
     {"version", "Show version",                     NULL,          &cmd_version, NULL},
-    {"mycall",  "Manage and select MYCALL",          NULL,          &cmd_mycall,  NULL},
-    {"my",      "Alias for mycall",                  NULL,          &cmd_mycall,  NULL},
+    {"mycall",  "Manage and select MYCALL",          "[help|list|set|use|del|<CALL>]", &cmd_mycall,  NULL},
+    {"my",      "Alias for mycall",                  "[help|list|set|use|del|<CALL>]", &cmd_mycall,  NULL},
     {"testtx",  "Send test packet",                  "[message]",   &cmd_testtx,  NULL},
     {"uisend",  "Send UI information",               "<call>",      &cmd_uisend,  NULL},
     {"uimode",  "Set UI mode",                       "<mode>",      &cmd_uimode,  NULL},
