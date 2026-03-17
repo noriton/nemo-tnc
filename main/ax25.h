@@ -51,6 +51,19 @@ uint16_t ax25_fcs_calculate(const uint8_t *data, size_t len);
 
 
 /**
+ * @brief 送信先コールサインの検証とAX.25アドレスへのエンコード
+ *
+ * 特殊アドレス (CQ, BEACON, IDENT 等) はコールサイン検証を省略する。
+ * 記号類は除去し、SSIDは省略時 0 とする。
+ *
+ * @param out_buf 7バイトの出力先
+ * @param dest    送信先コールサイン文字列
+ * @param is_last アドレスフィールドの最後かどうか
+ * @return        1=有効(エンコード済み), 0=無効
+ */
+int ax25_encode_dest(uint8_t out_buf[7], const char *dest, bool is_last);
+
+/**
  * @brief AX.25 UIフレームから情報フィールドを取り出す
  * @param frame 受信したAX.25フレーム全体（FCS込みでも可だが、使わない）
  * @param frame_len フレーム長
