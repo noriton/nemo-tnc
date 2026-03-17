@@ -16,11 +16,23 @@
 static int     hist_dirty[2]         = {0, 0};
 static int64_t hist_last_save_us[2]  = {0, 0};
 
+// エントリアクセスマクロ
+// pool[p+0]: PREV = go_older方向, pool[p+1]: NEXT = go_newer方向
+// pool[p+2..]: NUL終端コマンド文字列
+#define H_PREV(pool, p)  ((pool)[(p)])
+#define H_NEXT(pool, p)  ((pool)[(p)+1])
+#define H_CMD(pool, p)   ((char*)&(pool)[(p)+2])
+
+static int hist_entry_len(uint8_t *pool, uint8_t p) {
+    return 2 + (int)strlen(H_CMD(pool, p)) + 1;
+}
+
 // メモリ上の最新ヒストリを NVS にコミットする（dirty な場合のみ書き込む）
 void history_commit(tnc_port_info_t *port)
 {
     if (!hist_dirty[port->id]) return;
-    nvs_save_history(port->id, port->history, port->hist_head, port->hist_count);
+    nvs_save_history(port->id, port->hist_pool,
+                     port->hist_head, port->hist_count);
     hist_dirty[port->id]        = 0;
     hist_last_save_us[port->id] = esp_timer_get_time();
 }
@@ -315,34 +327,155 @@ int cmd_uisend(int argc, char **argv)
 
 // --- コマンドヒストリ操作 ---
 
-// コマンドをヒストリに追加（連続重複は無視）
+// 最古エントリを循環リストから切り離す
+static void hist_evict_oldest(tnc_port_info_t *port)
+{
+    if (port->hist_count == 0) return;
+    uint8_t *pool = port->hist_pool;
+
+    if (port->hist_count == 1) {
+        port->hist_head  = HIST_NIL;
+        port->hist_count = 0;
+        port->hist_wp    = 0;
+        return;
+    }
+
+    uint8_t oldest     = H_NEXT(pool, port->hist_head);
+    uint8_t new_oldest = H_NEXT(pool, oldest);
+    H_NEXT(pool, port->hist_head) = new_oldest;
+    H_PREV(pool, new_oldest)      = port->hist_head;
+
+    if (port->hist_pos_off == (int)oldest)
+        port->hist_pos_off = (int)new_oldest;
+
+    port->hist_count--;
+}
+
+// プールを oldest→newest 順に先頭から詰め直す
+static void hist_compact(tnc_port_info_t *port)
+{
+    if (port->hist_count == 0) { port->hist_wp = 0; return; }
+
+    uint8_t new_pool[HIST_POOL_SIZE];
+    uint8_t old_off[64], new_off[64];
+    int n = 0, wp = 0;
+
+    uint8_t p = H_NEXT(port->hist_pool, port->hist_head); // oldest
+    for (int i = 0; i < port->hist_count; i++) {
+        old_off[n] = p;
+        new_off[n] = (uint8_t)wp;
+        n++;
+        const char *s = H_CMD(port->hist_pool, p);
+        int slen = (int)strlen(s) + 1;
+        memcpy(&new_pool[wp + 2], s, slen);
+        wp += 2 + slen;
+        p = H_NEXT(port->hist_pool, p);
+    }
+    // 循環ポインタ再構築 (i=0が最古、i=n-1が最新)
+    for (int i = 0; i < n; i++) {
+        new_pool[new_off[i]]     = new_off[(i - 1 + n) % n]; // PREV=older
+        new_pool[new_off[i] + 1] = new_off[(i + 1) % n];     // NEXT=newer
+    }
+    memcpy(port->hist_pool, new_pool, HIST_POOL_SIZE);
+    port->hist_head = new_off[n - 1]; // newest
+    port->hist_wp   = (uint8_t)wp;
+
+    if (port->hist_pos_off >= 0) {
+        for (int i = 0; i < n; i++) {
+            if (old_off[i] == (uint8_t)port->hist_pos_off) {
+                port->hist_pos_off = new_off[i]; break;
+            }
+        }
+    }
+}
+
+// needed バイトの書き込み領域を確保してオフセットを返す
+static uint8_t hist_pool_alloc(tnc_port_info_t *port, int needed)
+{
+    if ((int)port->hist_wp + needed > HIST_POOL_SIZE)
+        hist_compact(port);
+
+    while (port->hist_count > 0) {
+        uint8_t oldest  = H_NEXT(port->hist_pool, port->hist_head);
+        int o_start = (int)oldest;
+        int o_end   = o_start + hist_entry_len(port->hist_pool, oldest);
+        int n_start = (int)port->hist_wp;
+        int n_end   = n_start + needed;
+        if (n_start < o_end && n_end > o_start)
+            hist_evict_oldest(port);
+        else
+            break;
+    }
+    uint8_t off = port->hist_wp;
+    port->hist_wp += (uint8_t)needed;
+    return off;
+}
+
+// NVSロード用（dirty/save制御なし）
+void hist_push_raw(tnc_port_info_t *port, const char *cmd)
+{
+    if (cmd[0] == '\0') return;
+    int needed = 2 + (int)strlen(cmd) + 1;
+    uint8_t off = hist_pool_alloc(port, needed);
+    uint8_t *pool = port->hist_pool;
+    strcpy(H_CMD(pool, off), cmd);
+    if (port->hist_count == 0) {
+        H_PREV(pool, off) = off; H_NEXT(pool, off) = off;
+        port->hist_head = off;
+    } else {
+        uint8_t oldest = H_NEXT(pool, port->hist_head);
+        H_PREV(pool, off) = port->hist_head;
+        H_NEXT(pool, off) = oldest;
+        H_NEXT(pool, port->hist_head) = off;
+        H_PREV(pool, oldest) = off;
+        port->hist_head = off;
+    }
+    port->hist_count++;
+}
+
+// コマンドをヒストリに追加（重複は最新に移動、記録停止中は無視）
 static void hist_push(tnc_port_info_t *port, const char *cmd)
 {
     if (cmd[0] == '\0') return;
+    if (!port->hist_enabled) return;
 
-    // 直前と同じコマンドは登録しない
+    uint8_t *pool = port->hist_pool;
+
+    // 重複検索（oldest→newest 方向）
     if (port->hist_count > 0) {
-        int prev = (port->hist_head - 1 + CMD_HISTORY_SIZE) % CMD_HISTORY_SIZE;
-        if (strcmp(port->history[prev], cmd) == 0) return;
+        uint8_t p = H_NEXT(pool, port->hist_head); // oldest
+        for (int i = 0; i < port->hist_count; i++) {
+            if (strcmp(H_CMD(pool, p), cmd) == 0) {
+                if (p != port->hist_head) {
+                    uint8_t go_older = H_PREV(pool, p);
+                    uint8_t go_newer = H_NEXT(pool, p);
+                    H_NEXT(pool, go_older) = go_newer;
+                    H_PREV(pool, go_newer) = go_older;
+                    uint8_t oldest = H_NEXT(pool, port->hist_head);
+                    H_PREV(pool, p) = port->hist_head;
+                    H_NEXT(pool, p) = oldest;
+                    H_NEXT(pool, port->hist_head) = p;
+                    H_PREV(pool, oldest) = p;
+                    port->hist_head = p;
+                }
+                goto mark_dirty;
+            }
+            p = H_NEXT(pool, p);
+        }
     }
 
-    strncpy(port->history[port->hist_head], cmd, sizeof(port->history[0]) - 1);
-    port->history[port->hist_head][sizeof(port->history[0]) - 1] = '\0';
-    port->hist_head = (port->hist_head + 1) % CMD_HISTORY_SIZE;
-    if (port->hist_count < CMD_HISTORY_SIZE) port->hist_count++;
+    hist_push_raw(port, cmd);
 
-    // dirty フラグを立て、3分経過していればコミット
+mark_dirty:
     hist_dirty[port->id] = 1;
     int64_t now = esp_timer_get_time();
-    if ((now - hist_last_save_us[port->id]) >= HIST_SAVE_INTERVAL_US) {
+    if ((now - hist_last_save_us[port->id]) >= HIST_SAVE_INTERVAL_US)
         history_commit(port);
-    }
 }
 
 // 現在の入力行を消去して str を表示
 static void hist_redraw(tnc_port_info_t *port, const char *str)
 {
-    // バックスペースで現在の入力を消す
     for (int i = 0; i < port->line_pos; i++) {
         xRingbufferSend(port->to_pc, (uint8_t *)"\b \b", 3, 0);
     }
@@ -354,41 +487,40 @@ static void hist_redraw(tnc_port_info_t *port, const char *str)
     xRingbufferSend(port->to_pc, (uint8_t *)str, len, 0);
 }
 
-// ヒストリを古い方向へ（上キー）
+// 上キー: より古いエントリへ
 static void hist_up(tnc_port_info_t *port)
 {
     if (port->hist_count == 0) return;
+    uint8_t *pool = port->hist_pool;
 
-    if (port->hist_pos == -1) {
-        // 現在の入力を退避してブラウズ開始
+    if (port->hist_pos_off == -1) {
         strncpy(port->hist_saved, port->line_buf, sizeof(port->hist_saved) - 1);
         port->hist_saved[sizeof(port->hist_saved) - 1] = '\0';
         port->hist_saved_pos = port->line_pos;
-        port->hist_pos = 0;
-    } else if (port->hist_pos < port->hist_count - 1) {
-        port->hist_pos++;
+        port->hist_pos_off = (int)port->hist_head; // 最新から開始
     } else {
-        return; // 最古に達している
+        uint8_t cur    = (uint8_t)port->hist_pos_off;
+        uint8_t oldest = H_NEXT(pool, port->hist_head);
+        if (cur == oldest) return; // 最古に達した
+        port->hist_pos_off = (int)H_PREV(pool, cur);
     }
-
-    int idx = (port->hist_head - 1 - port->hist_pos + CMD_HISTORY_SIZE * 2) % CMD_HISTORY_SIZE;
-    hist_redraw(port, port->history[idx]);
+    hist_redraw(port, H_CMD(pool, (uint8_t)port->hist_pos_off));
 }
 
-// ヒストリを新しい方向へ（下キー）
+// 下キー: より新しいエントリへ
 static void hist_down(tnc_port_info_t *port)
 {
-    if (port->hist_pos == -1) return;
+    if (port->hist_pos_off == -1) return;
+    uint8_t *pool = port->hist_pool;
+    uint8_t cur = (uint8_t)port->hist_pos_off;
 
-    if (port->hist_pos > 0) {
-        port->hist_pos--;
-        int idx = (port->hist_head - 1 - port->hist_pos + CMD_HISTORY_SIZE * 2) % CMD_HISTORY_SIZE;
-        hist_redraw(port, port->history[idx]);
-    } else {
-        // 最新より新しい → 退避した入力に戻す
-        port->hist_pos = -1;
+    if (cur == port->hist_head) {
+        port->hist_pos_off = -1;
         hist_redraw(port, port->hist_saved);
+        return;
     }
+    port->hist_pos_off = (int)H_NEXT(pool, cur);
+    hist_redraw(port, H_CMD(pool, (uint8_t)port->hist_pos_off));
 }
 
 // --- コマンド解析ロジック ---
@@ -434,13 +566,18 @@ void process_command_input(tnc_port_info_t *port, uint8_t *data, size_t len)
         } else if (c == '\r') {
             const char *crlf = "\r\n";
             xRingbufferSend(port->to_pc, (uint8_t *)crlf, 2, 0);
-            port->hist_pos = -1; // ブラウズ状態をリセット
+            port->hist_pos_off = -1; // ブラウズ状態をリセット
 
             if (port->line_pos > 0) {
                 port->line_buf[port->line_pos] = '\0';
 
-                // ヒストリに追加
-                hist_push(port, port->line_buf);
+                // ヒストリに追加（h/hs/hn/hy は記録しない）
+                if (strcmp(port->line_buf, "h")  != 0 &&
+                    strcmp(port->line_buf, "hs") != 0 &&
+                    strcmp(port->line_buf, "hn") != 0 &&
+                    strcmp(port->line_buf, "hy") != 0) {
+                    hist_push(port, port->line_buf);
+                }
 
                 // コマンド名（最初のトークン）を小文字化
                 for (int j = 0; port->line_buf[j] != '\0' && port->line_buf[j] != ' '; j++) {
@@ -495,6 +632,48 @@ void command_parser_init(void)
 
 // --- コマンド登録の初期化 ---
 
+static int cmd_hist_show(int argc, char **argv)
+{
+    tnc_port_info_t *port = pvTaskGetThreadLocalStoragePointer(NULL, 0);
+    if (!port) return 1;
+    if (port->hist_count == 0) { cmd_response("(no history)\r\n"); return 0; }
+    uint8_t *pool = port->hist_pool;
+    uint8_t p = H_NEXT(pool, port->hist_head); // oldest
+    for (int i = 1; i <= port->hist_count; i++) {
+        cmd_response("%2d: %s\r\n", i, H_CMD(pool, p));
+        p = H_NEXT(pool, p);
+    }
+    return 0;
+}
+
+static int cmd_hist_save(int argc, char **argv)
+{
+    tnc_port_info_t *port = pvTaskGetThreadLocalStoragePointer(NULL, 0);
+    if (!port) return 1;
+    hist_dirty[port->id] = 1;
+    history_commit(port);
+    cmd_response("History saved.\r\n");
+    return 0;
+}
+
+static int cmd_hist_off(int argc, char **argv)
+{
+    tnc_port_info_t *port = pvTaskGetThreadLocalStoragePointer(NULL, 0);
+    if (!port) return 1;
+    port->hist_enabled = 0;
+    cmd_response("History off.\r\n");
+    return 0;
+}
+
+static int cmd_hist_on(int argc, char **argv)
+{
+    tnc_port_info_t *port = pvTaskGetThreadLocalStoragePointer(NULL, 0);
+    if (!port) return 1;
+    port->hist_enabled = 1;
+    cmd_response("History on.\r\n");
+    return 0;
+}
+
 static const esp_console_cmd_t s_cmds[] = {
     {"version", "Show version",                     NULL,          &cmd_version, NULL},
     {"mycall",  "Manage and select MYCALL",          "[help|list|set|use|del|<CALL>]", &cmd_mycall,  NULL},
@@ -503,6 +682,10 @@ static const esp_console_cmd_t s_cmds[] = {
     {"uisend",  "Send UI information",               "<call>",      &cmd_uisend,  NULL},
     {"uimode",  "Set UI mode",                       "<mode>",      &cmd_uimode,  NULL},
     {"led",     "Control LED (on/off)",              "<on|off>",    &cmd_led,     NULL},
+    {"h",       "Show command history",              NULL,          &cmd_hist_show, NULL},
+    {"hs",      "Save history to NVS now",           NULL,          &cmd_hist_save, NULL},
+    {"hn",      "Stop recording history",            NULL,          &cmd_hist_off,  NULL},
+    {"hy",      "Start recording history",           NULL,          &cmd_hist_on,   NULL},
     {"help",    "Show available commands",           NULL,          &cmd_help,    NULL},
 };
 

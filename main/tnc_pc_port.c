@@ -103,9 +103,23 @@ void tnc_pc_ports_init(void)
         nvs_load_port_mycall_idx(i, &pc_ports[i].mycall_idx, i);
 
         // コマンドヒストリをNVSから復元
-        pc_ports[i].hist_pos = -1; // ブラウズ中でない状態で初期化
-        nvs_load_history(i, pc_ports[i].history,
-                         &pc_ports[i].hist_head, &pc_ports[i].hist_count);
+        pc_ports[i].hist_head    = HIST_NIL;
+        pc_ports[i].hist_wp      = 0;
+        pc_ports[i].hist_count   = 0;
+        pc_ports[i].hist_pos_off = -1;
+        pc_ports[i].hist_enabled = 1;
+        memset(pc_ports[i].hist_pool, 0, HIST_POOL_SIZE);
+        {
+            // 注意: char hist_cmds[32][256] = 8KBでは
+            // スタック確保となりapp_mainスタックをオーバーフローさせる。
+            // staticにしてBSSセグメントに配置すること。
+            static char hist_cmds[32][256];
+            int  hist_loaded = 0;
+            nvs_load_history(i, hist_cmds, &hist_loaded);
+            for (int j = 0; j < hist_loaded; j++) {
+                hist_push_raw(&pc_ports[i], hist_cmds[j]);
+            }
+        }
 
         kiss_init(&(pc_ports[i].kiss_ctx)); // KISSパーサのコンテキスト初期化
         // タスク起動

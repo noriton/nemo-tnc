@@ -242,25 +242,26 @@ esp_err_t nvs_load_led_forced_off(int *off)
 // NVSキー: "p{port}_hcnt"（件数）, "p{port}_h{i}"（エントリ、i=0が最古）
 // ---------------------------------------------------------------------------
 
-esp_err_t nvs_save_history(int port_id, char history[CMD_HISTORY_SIZE][256],
-                            int hist_head, int hist_count)
+esp_err_t nvs_save_history(int port_id, uint8_t *pool,
+                            uint8_t hist_head, int hist_count)
 {
+    if (hist_count == 0) return ESP_OK;
+
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
     if (err != ESP_OK) return err;
 
     // 件数を保存
-    char key_cnt[16];
-    snprintf(key_cnt, sizeof(key_cnt), "p%d_hcnt", port_id);
-    err = nvs_set_i8(h, key_cnt, (int8_t)hist_count);
-    if (err != ESP_OK) { nvs_close(h); return err; }
+    char key[16];
+    snprintf(key, sizeof(key), "p%d_hcnt", port_id);
+    nvs_set_i8(h, key, (int8_t)hist_count);
 
-    // エントリを古い順（i=0: 最古）で保存
+    // oldest(= pool[hist_head+1]) から newer 方向に順番に保存
+    uint8_t p = pool[hist_head + 1]; // H_NEXT = oldest
     for (int i = 0; i < hist_count; i++) {
-        int slot = (hist_head - hist_count + i + CMD_HISTORY_SIZE * 2) % CMD_HISTORY_SIZE;
-        char key[16];
         snprintf(key, sizeof(key), "p%d_h%d", port_id, i);
-        nvs_set_str(h, key, history[slot]);
+        nvs_set_str(h, key, (const char *)&pool[p + 2]);
+        p = pool[p + 1]; // H_NEXT = go newer
     }
 
     nvs_commit(h);
@@ -268,38 +269,32 @@ esp_err_t nvs_save_history(int port_id, char history[CMD_HISTORY_SIZE][256],
     return ESP_OK;
 }
 
-esp_err_t nvs_load_history(int port_id, char history[CMD_HISTORY_SIZE][256],
-                            int *hist_head, int *hist_count)
+esp_err_t nvs_load_history(int port_id, char out_cmds[][256], int *out_count)
 {
-    *hist_head  = 0;
-    *hist_count = 0;
+    *out_count = 0;
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
     if (err != ESP_OK) return err;
 
     // 件数を取得
-    char key_cnt[16];
-    snprintf(key_cnt, sizeof(key_cnt), "p%d_hcnt", port_id);
+    char key[16];
+    snprintf(key, sizeof(key), "p%d_hcnt", port_id);
     int8_t cnt = 0;
-    err = nvs_get_i8(h, key_cnt, &cnt);
+    err = nvs_get_i8(h, key, &cnt);
     if (err != ESP_OK || cnt <= 0) { nvs_close(h); return ESP_OK; }
-    if (cnt > CMD_HISTORY_SIZE) cnt = CMD_HISTORY_SIZE;
+    if (cnt > 32) cnt = 32;
 
-    // エントリを古い順にスロット 0..cnt-1 へ復元
+    // エントリを古い順（i=0: 最古）に文字列配列へ復元
     int loaded = 0;
     for (int i = 0; i < cnt; i++) {
-        char key[16];
         snprintf(key, sizeof(key), "p%d_h%d", port_id, i);
         size_t len = 256;
-        if (nvs_get_str(h, key, history[i], &len) == ESP_OK) {
+        if (nvs_get_str(h, key, out_cmds[loaded], &len) == ESP_OK)
             loaded++;
-        }
     }
 
-    *hist_count = loaded;
-    *hist_head  = loaded % CMD_HISTORY_SIZE;
-
+    *out_count = loaded;
     nvs_close(h);
     return ESP_OK;
 }

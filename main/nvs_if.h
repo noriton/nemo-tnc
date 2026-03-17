@@ -35,8 +35,9 @@ esp_err_t nvs_save_led_forced_off(int off);
 esp_err_t nvs_load_led_forced_off(int *off);
 
 // コマンドヒストリ（ポートごとに独立保存）
-esp_err_t nvs_save_history(int port_id, char history[CMD_HISTORY_SIZE][256], int hist_head, int hist_count);
-esp_err_t nvs_load_history(int port_id, char history[CMD_HISTORY_SIZE][256], int *hist_head, int *hist_count);
+esp_err_t nvs_save_history(int port_id, uint8_t *hist_pool,
+                            uint8_t hist_head, int hist_count);
+esp_err_t nvs_load_history(int port_id, char out_cmds[][256], int *out_count);
 
 /**
  * ポートごとのデフォルトモードを保存

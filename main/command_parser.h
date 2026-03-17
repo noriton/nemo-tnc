@@ -38,5 +38,6 @@ void send_prompt(tnc_port_info_t *port);
  * モード遷移・シャットダウン時など明示的に保存したい場面で呼ぶ。
  */
 void history_commit(tnc_port_info_t *port);
+void hist_push_raw(tnc_port_info_t *port, const char *cmd);
 
 #endif // COMMAND_PARSER_H
