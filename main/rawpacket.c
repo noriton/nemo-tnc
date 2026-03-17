@@ -167,6 +167,82 @@ size_t rawpacket_build_ax25_ui(const tnc_meta_header_t *meta,
 
 
 // ---------------------------------------------------------------------------
+// テスト用モニタ出力（AX.25生パケット → テキスト整形 → 同一ポートのUSBへ返送）
+// ---------------------------------------------------------------------------
+
+/**
+ * AX.25生パケットを TNC2 風テキストに整形し usb_to_pc[port_id] へ送る。
+ * フォーマット例:
+ *   [MON] port0: JH1FBM>CQ,RELAY* [UI pid=F0]: Hello World
+ */
+static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_len)
+{
+    // Dest(7) + Src(7) + Ctrl(1) + PID(1) 以上必要
+    if (raw_len < 16) return;
+
+    // 宛先コールサイン
+    char dest[12] = {0};
+    uint8_t dest_ssid = 0;
+    decode_callsign(&raw[0], dest, &dest_ssid);
+
+    // 送信元コールサイン
+    char src[12] = {0};
+    uint8_t src_ssid = 0;
+    decode_callsign(&raw[7], src, &src_ssid);
+
+    // アドレスフィールドを走査してデジピータ収集・終端位置を確認
+    char digi_str[64] = {0};
+    size_t pos = 0;
+    while (pos + 7 <= raw_len) {
+        bool is_last = (raw[pos + 6] & 0x01) != 0;
+        if (pos >= 14) {
+            // デジピータアドレス
+            char digi[12] = {0};
+            uint8_t digi_ssid = 0;
+            bool h_bit = (raw[pos + 6] & 0x80) != 0;
+            decode_callsign(&raw[pos], digi, &digi_ssid);
+            char entry[20];
+            if (digi_ssid > 0)
+                snprintf(entry, sizeof(entry), ",%s-%d%s", digi, digi_ssid, h_bit ? "*" : "");
+            else
+                snprintf(entry, sizeof(entry), ",%s%s", digi, h_bit ? "*" : "");
+            strncat(digi_str, entry, sizeof(digi_str) - strlen(digi_str) - 1);
+        }
+        pos += 7;
+        if (is_last) break;
+    }
+
+    if (pos + 2 > raw_len) return;
+    uint8_t pid      = raw[pos + 1];
+    const char *info = (const char *)&raw[pos + 2];
+    size_t info_len  = raw_len - pos - 2;
+
+    // コールサイン文字列 (SSID付き)
+    char src_str[16]  = {0};
+    char dest_str[16] = {0};
+    if (src_ssid > 0)
+        snprintf(src_str,  sizeof(src_str),  "%s-%d", src,  src_ssid);
+    else
+        strncpy(src_str, src, sizeof(src_str) - 1);
+    if (dest_ssid > 0)
+        snprintf(dest_str, sizeof(dest_str), "%s-%d", dest, dest_ssid);
+    else
+        strncpy(dest_str, dest, sizeof(dest_str) - 1);
+
+    // モニタ行フォーマット (TNC2スタイル)
+    char line[280];
+    int n = snprintf(line, sizeof(line),
+                     "[MON] port%d: %s>%s%s [UI pid=%02X]: %.*s\r\n",
+                     port_id, src_str, dest_str, digi_str, pid,
+                     (int)info_len, info);
+    if (n > 0 && n < (int)sizeof(line)) {
+        xRingbufferSend(usb_to_pc[port_id], (uint8_t *)line, (size_t)n,
+                        pdMS_TO_TICKS(100));
+    }
+}
+
+
+// ---------------------------------------------------------------------------
 // 受信タスク（ポートごとに1つ起動）
 // ---------------------------------------------------------------------------
 
@@ -223,7 +299,10 @@ static void rawpacket_task(void *pvParameters)
                 break;
             }
 
-            // raw_tx_buf へ出力（メタデータヘッダ先頭 + L3生パケット）
+            // テスト用: パケット内容をテキストモニタとして同一ポートのUSBへ返送
+            rawpacket_monitor_to_pc(port_id, raw_buf, raw_len);
+
+            // raw_tx_buf へ出力（将来: FX.25/物理層への引き渡し用）
             if (raw_tx_buf != NULL) {
                 raw_tx_item_t out;
                 // メタデータをそのまま引き継ぎ、payload_len だけ生パケット長に更新
@@ -301,7 +380,8 @@ void rawpacket_init(void)
     for (int i = 0; i < 2; i++) {
         char task_name[16];
         snprintf(task_name, sizeof(task_name), "rawpkt_%d", i);
-        xTaskCreate(rawpacket_task, task_name, 2048, (void *)(intptr_t)i, 5, NULL);
+        // スタック: raw_buf[328] + raw_tx_item_t(~484B) + monitor line(280B) のため 4096 確保
+        xTaskCreate(rawpacket_task, task_name, 4096, (void *)(intptr_t)i, 5, NULL);
     }
 
     ESP_LOGI(TAG, "rawpacket_init done");

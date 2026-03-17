@@ -1,5 +1,6 @@
 #include "rx_frame.h"
 #include "tnc_buffer.h"
+#include "rawpacket.h"
 #include "ax25.h"
 #include "tinyusb_cdc_acm.h"
 #include "freertos/FreeRTOS.h"
@@ -17,7 +18,7 @@ static void rx_frame_task(void *pvParameters)
 
     for (;;) {
         // Receive item from ring buffer
-        item = (uint8_t *)xRingbufferReceive(tx_ringbuf[0], &item_size, portMAX_DELAY);
+        item = (uint8_t *)xRingbufferReceive(raw_tx_buf, &item_size, portMAX_DELAY);
 
         if (item != NULL) {
             // 1. Hex Dump to Port 1
@@ -60,7 +61,7 @@ static void rx_frame_task(void *pvParameters)
             tinyusb_cdcacm_write_flush(1, pdMS_TO_TICKS(10));
 
             // Return item
-            vRingbufferReturnItem(tx_ringbuf[0], (void *)item);
+            vRingbufferReturnItem(raw_tx_buf, (void *)item);
         }
     }
 }

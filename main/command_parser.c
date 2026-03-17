@@ -303,8 +303,9 @@ int cmd_uisend(int argc, char **argv)
     // 引数の取得
     const char *dest_call = argv[1];
 
-    // DEST_CALLのバリデーション
-    if (!callsign_validate(dest_call)) {
+    // DEST_CALLのバリデーション（CQ/BEACON等の特殊アドレスも通す）
+    uint8_t dest_ax25[7];
+    if (!ax25_encode_dest(dest_ax25, dest_call, false)) {
         cmd_response("Error: Invalid callsign: %s\r\n", dest_call);
         return 1;
     }

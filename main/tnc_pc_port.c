@@ -522,6 +522,11 @@ void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len, char
         meta->dest_call[0] = '\0';
     }
 
+    // src_call: 現在選択中のMYCALL
+    const char *mycall = mycall_list[port->id][port->mycall_idx];
+    strncpy(meta->src_call, mycall, sizeof(meta->src_call) - 1);
+    meta->src_call[sizeof(meta->src_call) - 1] = '\0';
+
     memcpy(send_tmp + header_len, payload, len);
 
     // No-Split リングバッファへ
