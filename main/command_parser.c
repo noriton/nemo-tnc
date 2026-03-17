@@ -303,6 +303,12 @@ int cmd_uisend(int argc, char **argv)
     // 引数の取得
     const char *dest_call = argv[1];
 
+    // DEST_CALLのバリデーション
+    if (!callsign_validate(dest_call)) {
+        cmd_response("Error: Invalid callsign: %s\r\n", dest_call);
+        return 1;
+    }
+
     // メッセージ部分はスペース区切りの全引数を結合するか、
     // 簡易的に argv[2] 以降を連結する（ここでは argv[2] 以降を使用）
     char message[256] = {0};
