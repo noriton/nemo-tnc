@@ -102,7 +102,7 @@ void tnc_pc_ports_init(void)
         // ポートのMYCALLインデックスをNVSから復元（未保存ならポートIDをデフォルトに）
         nvs_load_port_mycall_idx(i, &pc_ports[i].mycall_idx, i);
 
-        // コマンドヒストリをNVSから復元
+        // コマンドヒストリをNVSから復元　ここも関数に切り出してもいいかも
         pc_ports[i].hist_head    = HIST_NIL;
         pc_ports[i].hist_wp      = 0;
         pc_ports[i].hist_count   = 0;
