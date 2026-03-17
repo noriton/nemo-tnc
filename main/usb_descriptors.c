@@ -66,8 +66,15 @@ static void usb_tx_task(void *pvParameters)
             size_t size;
             uint8_t *data = (uint8_t *)xRingbufferReceive(usb_to_pc[itf], &size, 0);
             if (data != NULL) {
-                tinyusb_cdcacm_write_queue(itf, data, size);
-                tinyusb_cdcacm_write_flush(itf, 0);  // ノンブロッキング
+                // write_queue はCDC TXバッファサイズ分しか受け付けないため
+                // 全バイト送り切るまでループする
+                size_t sent = 0;
+                while (sent < size) {
+                    size_t written = tinyusb_cdcacm_write_queue(itf, data + sent, size - sent);
+                    tinyusb_cdcacm_write_flush(itf, pdMS_TO_TICKS(20));
+                    if (written == 0) vTaskDelay(1); // TXバッファフル時は少し待つ
+                    else sent += written;
+                }
                 vRingbufferReturnItem(usb_to_pc[itf], (void *)data);
             }
         }

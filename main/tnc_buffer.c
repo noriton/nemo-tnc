@@ -15,8 +15,8 @@ void tnc_buffer_init(void)
 
     usb_from_pc[0] = xRingbufferCreate(2048, RINGBUF_TYPE_BYTEBUF);
     usb_from_pc[1] = xRingbufferCreate(2048, RINGBUF_TYPE_BYTEBUF);
-    usb_to_pc[0] = xRingbufferCreate(2048, RINGBUF_TYPE_BYTEBUF);
-    usb_to_pc[1] = xRingbufferCreate(2048, RINGBUF_TYPE_BYTEBUF);
+    usb_to_pc[0] = xRingbufferCreate(4096, RINGBUF_TYPE_BYTEBUF);
+    usb_to_pc[1] = xRingbufferCreate(4096, RINGBUF_TYPE_BYTEBUF);
 
     rx_ringbuf[0] = xRingbufferCreate(2048, RINGBUF_TYPE_BYTEBUF);
     rx_ringbuf[1] = xRingbufferCreate(2048, RINGBUF_TYPE_BYTEBUF);

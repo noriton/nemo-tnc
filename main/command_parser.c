@@ -62,8 +62,8 @@ static void cmd_response(const char *fmt, ...)
         vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
 
-        // ポートの送信バッファへ書き込み
-        xRingbufferSend(port->to_pc, (uint8_t *)buf, strlen(buf), 0);
+        // ポートの送信バッファへ書き込み（バッファフル時は最大100ms待機してドロップを防ぐ）
+        xRingbufferSend(port->to_pc, (uint8_t *)buf, strlen(buf), pdMS_TO_TICKS(100));
     }
 }
 
