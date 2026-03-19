@@ -246,11 +246,10 @@ static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_
     const char *info = (const char *)&raw[pos + 2];
     size_t info_len  = raw_len - pos - 4;   // FCS 2バイトを除外
 
-    // FCS 検証（末尾2バイトが格納値、それ以前を再計算して照合）
+    // FCS 検証
     uint16_t fcs_stored = (uint16_t)raw[raw_len - 2]
                         | ((uint16_t)raw[raw_len - 1] << 8);
-    uint16_t fcs_calc   = ax25_fcs_calculate(raw, raw_len - 2);
-    const char *fcs_result = (fcs_calc == fcs_stored) ? "OK" : "NG";
+    const char *fcs_result = ax25_fcs_verify(raw, raw_len) ? "OK" : "NG";
 
     // コールサイン文字列 (SSID付き)
     char src_str[16]  = {0};

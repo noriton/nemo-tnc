@@ -49,6 +49,14 @@ size_t decode_callsign(const uint8_t *in_buf, char *callsign, uint8_t *ssid);
  */
 uint16_t ax25_fcs_calculate(const uint8_t *data, size_t len);
 
+/**
+ * @brief AX.25 FCS 検証
+ * @param frame FCS を含むフレーム全体
+ * @param len   フレーム長（FCS 2バイトを含む）
+ * @return true = FCS 一致, false = 不一致または長さ不足
+ */
+bool ax25_fcs_verify(const uint8_t *frame, size_t len);
+
 
 /**
  * @brief 送信先コールサインの検証とAX.25アドレスへのエンコード

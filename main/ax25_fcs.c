@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 /**
  * CRC-16-CCITT Lookup Table (LSB First / Reflected)
@@ -50,4 +51,23 @@ uint16_t ax25_fcs_calculate(const uint8_t *data, size_t len)
         fcs = (fcs >> 8) ^ crc16_table[(fcs ^ data[i]) & 0xFF];
     }
     return fcs ^ 0xFFFF; // Final XOR (Inversion)
+}
+
+/**
+ * @brief AX.25 FCS 検証
+ *
+ * フレーム末尾 2バイト（LSB first）を格納値として取り出し、
+ * それ以前のデータを再計算して照合する。
+ *
+ * @param frame FCS を含むフレーム全体
+ * @param len   フレーム長（FCS 2バイトを含む）
+ * @return true = FCS 一致, false = 不一致または長さ不足
+ */
+bool ax25_fcs_verify(const uint8_t *frame, size_t len)
+{
+    if (len < 2) return false;
+    uint16_t fcs_stored = (uint16_t)frame[len - 2]
+                        | ((uint16_t)frame[len - 1] << 8);
+    uint16_t fcs_calc   = ax25_fcs_calculate(frame, len - 2);
+    return (fcs_calc == fcs_stored);
 }
