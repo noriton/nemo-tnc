@@ -19,7 +19,7 @@
 #include "tnc_pc_port.h"
 #include "nvs_flash.h"
 #include "nvs_if.h"
-#include "rx_frame.h"
+#include "packet_monitor.h"
 #include "rawpacket.h"
 
 void tnc_init(void)
@@ -55,7 +55,7 @@ void tnc_init(void)
 
     rawpacket_init(); // L3生パケット生成タスク起動
 
-    rx_frame_init(); // RXフレーム受信タスク起動 (現状はLoopback/Debug用)
+    packet_monitor_init(); // パケットモニタタスク起動
 
 }
 

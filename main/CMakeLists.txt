@@ -7,7 +7,7 @@ idf_component_register(SRCS
     "command_parser.c"
     "nvs_if.c"
     "tx_frame.c"
-    "rx_frame.c"
+   
     "ax25.c"
     "ax25_utils.c"
     "ax25_fcs.c"
@@ -16,6 +16,7 @@ idf_component_register(SRCS
     "kiss_parser.c"
     "callsign.c"
     "rawpacket.c"
+    "packet_monitor.c"
 INCLUDE_DIRS "."
 PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console
 )

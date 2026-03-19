@@ -1,4 +1,4 @@
-#include "rx_frame.h"
+#include "packet_monitor.h"
 #include "tnc_buffer.h"
 #include "rawpacket.h"
 #include "ax25.h"
@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static const char *TAG = "RX_FRAME";
+static const char *TAG = "PKT_MON";
 
 // Hex ダンプの最大バッファサイズ
 // ヘッダ(20) + バイトあたり3文字 × RAW_PACKET_MAX_LEN_WITH_FCS(330) + 改行分 + 末尾改行
@@ -20,7 +20,7 @@ static const char *TAG = "RX_FRAME";
 // 1. Hex ダンプ出力
 // ---------------------------------------------------------------------------
 
-static void rx_frame_dump_hex(int port_id, const uint8_t *frame, size_t len)
+static void packet_monitor_dump_hex(int port_id, const uint8_t *frame, size_t len)
 {
     char buf[HEX_DUMP_BUF_SIZE];
     int pos = 0;
@@ -43,8 +43,8 @@ static void rx_frame_dump_hex(int port_id, const uint8_t *frame, size_t len)
 // 3. デコード＆表示
 // ---------------------------------------------------------------------------
 
-static void rx_frame_decode_and_print(int port_id, const uint8_t *frame,
-                                       size_t len, bool fcs_ok)
+static void packet_monitor_decode_and_print(int port_id, const uint8_t *frame,
+                                             size_t len, bool fcs_ok)
 {
     const char *fcs_result = fcs_ok ? "OK" : "NG";
     char decoded_info[256];
@@ -68,7 +68,7 @@ static void rx_frame_decode_and_print(int port_id, const uint8_t *frame,
 // タスク本体
 // ---------------------------------------------------------------------------
 
-static void rx_frame_task(void *pvParameters)
+static void packet_monitor_task(void *pvParameters)
 {
     size_t item_size;
 
@@ -84,17 +84,17 @@ static void rx_frame_task(void *pvParameters)
         const uint8_t *frame = item->data;
         size_t len           = item->meta.payload_len;
 
-        rx_frame_dump_hex(port_id, frame, len);
+        packet_monitor_dump_hex(port_id, frame, len);
         bool fcs_ok = ax25_fcs_verify(frame, len);
-        rx_frame_decode_and_print(port_id, frame, len, fcs_ok);
+        packet_monitor_decode_and_print(port_id, frame, len, fcs_ok);
 
         vRingbufferReturnItem(raw_tx_buf, (void *)item);
     }
 }
 
 
-void rx_frame_init(void)
+void packet_monitor_init(void)
 {
-    xTaskCreate(rx_frame_task, "rx_frame_task", 4096, NULL, 5, NULL);
-    ESP_LOGI(TAG, "RX Frame task started");
+    xTaskCreate(packet_monitor_task, "pkt_mon", 4096, NULL, 5, NULL);
+    ESP_LOGI(TAG, "packet_monitor_init done");
 }
