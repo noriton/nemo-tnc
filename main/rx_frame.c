@@ -8,61 +8,59 @@
 #include "freertos/ringbuf.h"
 #include "esp_log.h"
 #include <stdio.h>
+#include <string.h>
 
 static const char *TAG = "RX_FRAME";
 
 static void rx_frame_task(void *pvParameters)
 {
     size_t item_size;
-    uint8_t *item;
 
     for (;;) {
-        // Receive item from ring buffer
-        item = (uint8_t *)xRingbufferReceive(raw_tx_buf, &item_size, portMAX_DELAY);
+        // raw_tx_buf のアイテムは raw_tx_item_t (tnc_meta_header_t + AX.25 L3フレーム)
+        raw_tx_item_t *item = (raw_tx_item_t *)xRingbufferReceive(
+            raw_tx_buf, &item_size, portMAX_DELAY);
 
-        if (item != NULL) {
-            // 1. Hex Dump to Port 1
-            tinyusb_cdcacm_write_queue(1, (uint8_t *)"\r\n--- RX Frame ---\r\n", 18);
-            for (size_t i = 0; i < item_size; i++) {
-                char hex[4];
-                sprintf(hex, "%02X ", item[i]);
-                tinyusb_cdcacm_write_queue(1, (uint8_t *)hex, 3);
-                if ((i + 1) % 16 == 0) tinyusb_cdcacm_write_queue(1, (uint8_t *)"\r\n", 2);
-            }
-            tinyusb_cdcacm_write_queue(1, (uint8_t *)"\r\n", 2);
-
-            // 2. Decode and display message
-            uint8_t *dec_ptr = item;
-            size_t dec_len = item_size;
-
-            // Strip Start Flag
-            if (dec_len > 0 && dec_ptr[0] == 0x7E) {
-                dec_ptr++;
-                dec_len--;
-            }
-            // Strip End Flag
-            if (dec_len > 0 && dec_ptr[dec_len - 1] == 0x7E) {
-                dec_len--;
-            }
-
-            char decoded_info[256];
-            int decoded_len = ax25_decode_ui_info(dec_ptr, dec_len, decoded_info, sizeof(decoded_info));
-
-            if (decoded_len >= 0) {
-                char decode_msg[300];
-                int d_len = snprintf(decode_msg, sizeof(decode_msg), "Decoded: %s\r\n", decoded_info);
-                tinyusb_cdcacm_write_queue(1, (uint8_t *)decode_msg, d_len);
-            } else {
-                 char err_msg[32];
-                 snprintf(err_msg, sizeof(err_msg), "Decode Failed: %d\r\n", decoded_len);
-                 tinyusb_cdcacm_write_queue(1, (uint8_t *)err_msg, strlen(err_msg));
-            }
-            
-            tinyusb_cdcacm_write_flush(1, pdMS_TO_TICKS(10));
-
-            // Return item
-            vRingbufferReturnItem(raw_tx_buf, (void *)item);
+        if (item == NULL) {
+            continue;
         }
+
+        int port_id              = item->meta.port_id;
+        const uint8_t *ax25_frame = item->data;
+        size_t ax25_len          = item->meta.payload_len;
+
+        // 1. AX.25フレームのHexダンプを送信元ポートへ出力
+        tinyusb_cdcacm_write_queue(port_id,
+            (uint8_t *)"\r\n--- RX Frame ---\r\n", 20);
+        for (size_t i = 0; i < ax25_len; i++) {
+            char hex[4];
+            sprintf(hex, "%02X ", ax25_frame[i]);
+            tinyusb_cdcacm_write_queue(port_id, (uint8_t *)hex, 3);
+            if ((i + 1) % 16 == 0) {
+                tinyusb_cdcacm_write_queue(port_id, (uint8_t *)"\r\n", 2);
+            }
+        }
+        tinyusb_cdcacm_write_queue(port_id, (uint8_t *)"\r\n", 2);
+
+        // 2. AX.25 UIフレームをデコードして情報フィールドを表示
+        char decoded_info[256];
+        int decoded_len = ax25_decode_ui_info(ax25_frame, ax25_len,
+                                              decoded_info, sizeof(decoded_info));
+        if (decoded_len >= 0) {
+            char decode_msg[300];
+            int d_len = snprintf(decode_msg, sizeof(decode_msg),
+                                 "Decoded: %s\r\n", decoded_info);
+            tinyusb_cdcacm_write_queue(port_id, (uint8_t *)decode_msg, d_len);
+        } else {
+            char err_msg[32];
+            int e_len = snprintf(err_msg, sizeof(err_msg),
+                                 "Decode Failed: %d\r\n", decoded_len);
+            tinyusb_cdcacm_write_queue(port_id, (uint8_t *)err_msg, e_len);
+        }
+
+        tinyusb_cdcacm_write_flush(port_id, pdMS_TO_TICKS(10));
+
+        vRingbufferReturnItem(raw_tx_buf, (void *)item);
     }
 }
 

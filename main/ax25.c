@@ -73,15 +73,10 @@ int ax25_decode_ui_info(const uint8_t *frame, size_t frame_len, char *out_info, 
     pos++;
 
     // 5. 情報フィールドの抽出
-    size_t info_len = frame_len - pos; // 残り全てを情報とする（FCSは外側で処理済みと仮定、あるいは含む場合は調整必要）
-    
-    // 注: ここでの frame_len は通常 FCS(2byte) を含むことが多いが、
-    // 送信直後のバッファにはFCSが含まれていない場合や、受信側で除去済みの場合がある。
-    // 今回の TESTTX では FCS 込みで渡すが、build 関数は FCS を付与している。
-    // build 関数の戻り値は FCS 込みのサイズ。
-    // したがって、最後の2バイトは FCS なので除外する。
-    if (info_len < 2) return -5; // 情報なし、またはFCS分しかない
-    info_len -= 2; // FCS除外
+    // raw_tx_buf 内フレームは FCS なし L3 フレーム（rawpacket_build_ax25_ui 生成）
+    // KISS フレームも FCS 除去済みで渡されるため、末尾 FCS 除去は行わない
+    size_t info_len = frame_len - pos;
+    if (info_len == 0) return -5; // 情報フィールドなし
 
     if (info_len > max_info_len - 1) {
         info_len = max_info_len - 1;

@@ -534,6 +534,9 @@ static void hist_down(tnc_port_info_t *port)
 
 void send_prompt(tnc_port_info_t *port)
 {
+    // コンソール状態機械が制御している間はプロンプト出力を抑制
+    if (port->con_suppress_prompt) return;
+
     char base[7];
     int  ssid;
     callsign_to_ax25(mycall_list[port->id][port->mycall_idx], base, &ssid);

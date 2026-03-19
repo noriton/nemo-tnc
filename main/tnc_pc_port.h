@@ -49,6 +49,14 @@ extern const mode_info_t tnc_mode_table[];
 
 
 
+// コンソール出力調停状態
+typedef enum con_state {
+    CON_CMD_WAIT,    // コマンド完了後 MON 待機中 (200ms)
+    CON_MON_ACTIVE,  // MON 表示中（100ms 静止でプロンプトへ）
+    CON_PROMPT,      // プロンプト表示済み・入力待ち
+    CON_TYPING,      // 入力中（MON は mon_ringbuf に保留）
+} con_state_t;
+
 typedef enum escape_state {
     ESC_STATE_IDLE,    // 無音待ち（1秒以上経過を待っている）
     ESC_STATE_READY,   // 無音確認済み（'+++' を受け入れ可能）
@@ -85,6 +93,11 @@ typedef struct tnc_port_info {
     char     hist_saved[256]; // ブラウズ開始時の入力を退避
     int      hist_saved_pos;
     uint8_t ansi_state;   // ANSIエスケープ解析状態 (0=通常 1=ESC受信 2=ESC[受信)
+
+    // --- コンソール出力調停 ---
+    con_state_t  con_state;           // 現在のコンソール表示状態
+    TickType_t   con_deadline;        // タイムアウト期限（FreeRTOS tick）
+    int          con_suppress_prompt; // 1=send_prompt を抑制（状態機械が制御する間）
 
     // --- トランスペアレントモード用に追加 ---
     uint8_t trans_buf[TNC_PACLEN]; // 送信待ちデータバッファ

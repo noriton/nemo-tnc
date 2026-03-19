@@ -236,7 +236,8 @@ static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_
                      port_id, src_str, dest_str, digi_str, pid,
                      (int)info_len, info);
     if (n > 0 && n < (int)sizeof(line)) {
-        xRingbufferSend(usb_to_pc[port_id], (uint8_t *)line, (size_t)n,
+        // mon_ringbuf へ送る（コンソール調停タスクがタイミングを制御する）
+        xRingbufferSend(mon_ringbuf[port_id], (uint8_t *)line, (size_t)n,
                         pdMS_TO_TICKS(100));
     }
 }

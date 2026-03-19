@@ -6,6 +6,7 @@
 #include "kiss_parser.h" // メタデータ定義などを参照
 #include "tnc_buffer.h"
 #include "nvs_if.h"
+#include "callsign.h"
 #include <string.h>
 
 
@@ -14,6 +15,10 @@ void pc_port_task(void *pvParameters);
 void enqueue_ui_packet(tnc_port_info_t *port, uint8_t *payload, size_t len, char *dest_call);
 static int check_escape_with_guard(tnc_port_info_t *port, const uint8_t *data,
                                    size_t size);
+
+// --- コンソール出力調停 タイミング定数 ---
+#define CON_CMD_WAIT_MS   200   // コマンド完了後 MON 待機時間 (ms)
+#define CON_MON_QUIET_MS  100   // MON 静止とみなす無着信時間 (ms)
 
 #define MAX_PORTS 2
 tnc_port_info_t pc_ports[MAX_PORTS];
@@ -177,15 +182,158 @@ static void flush_transport_buffer(tnc_port_info_t *port)
     port->trans_len = 0;
 }
 
+/**
+ * プロンプト文字列を buf へ構築して長さを返す（send_prompt と同じフォーマット）
+ */
+static int build_prompt_str(tnc_port_info_t *port, char *buf, int size)
+{
+    char base[7]; int ssid;
+    callsign_to_ax25(mycall_list[port->id][port->mycall_idx], base, &ssid);
+    if (ssid == 0) {
+        return snprintf(buf, size, "PORT%d::%s> ", port->id, base);
+    } else {
+        return snprintf(buf, size, "PORT%d::%s-%d> ", port->id, base, ssid);
+    }
+}
+
+/**
+ * 現在の画面行（プロンプト＋入力中文字列）を消去する
+ * ANSI "\r\033[K" を使用: 行頭へ戻り EOL まで消去
+ */
+static void con_erase_line(tnc_port_info_t *port)
+{
+    const char erase[] = "\r\033[K";
+    xRingbufferSend(port->to_pc, (uint8_t *)erase, sizeof(erase) - 1, pdMS_TO_TICKS(50));
+}
+
+/**
+ * コマンドモードの実行ループ（コンソール出力調停付き）
+ *
+ * 状態機械:
+ *   CON_CMD_WAIT  : コマンド完了直後。200ms 以内に MON が来たら先に表示。
+ *   CON_MON_ACTIVE: MON 表示中。100ms 静止したらプロンプト（＋入力中内容）を復元。
+ *   CON_PROMPT    : プロンプト表示済み。MON が来たら行を消去してMON表示へ。
+ *   CON_TYPING    : 入力中。MON は mon_ringbuf に保留し Enter 後に表示。
+ */
 void run_mode_command(tnc_port_info_t *port)
 {
+    // 初回は USB ホスト接続を待つため CON_CMD_WAIT で開始し、
+    // 1秒後にプロンプトを表示する（起動直後の "Flush failed" 警告を回避）
+    // boot_phase=true の間は from_pc の入力を破棄して二重プロンプトを防ぐ
+    // \r\n を先行送出して再起動前の旧プロンプトと同行にならないようにする
+    bool boot_phase = true;
+    port->con_suppress_prompt = 0;
+    port->con_state    = CON_CMD_WAIT;
+    port->con_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(1000);
+
     while (port->mode == PORT_MODE_COMMAND) {
+        TickType_t now = xTaskGetTickCount();
+
+        // -------------------------------------------------------
+        // 1. MON データのポーリング（TYPING 中は保留）
+        // -------------------------------------------------------
+        if (port->con_state != CON_TYPING) {
+            size_t mon_size;
+            uint8_t *mon_data =
+                (uint8_t *)xRingbufferReceive(mon_ringbuf[port->id], &mon_size, 0);
+
+            if (mon_data != NULL) {
+                switch (port->con_state) {
+                case CON_CMD_WAIT:
+                case CON_MON_ACTIVE:
+                    // そのまま usb_to_pc へ転送
+                    xRingbufferSend(port->to_pc, mon_data, mon_size, pdMS_TO_TICKS(50));
+                    break;
+                case CON_PROMPT:
+                    // プロンプト行を消去してから表示
+                    con_erase_line(port);
+                    xRingbufferSend(port->to_pc, mon_data, mon_size, pdMS_TO_TICKS(50));
+                    break;
+                default:
+                    xRingbufferSend(port->to_pc, mon_data, mon_size, pdMS_TO_TICKS(50));
+                    break;
+                }
+                vRingbufferReturnItem(mon_ringbuf[port->id], mon_data);
+                // MON 着信: MON_ACTIVE へ遷移してデッドライン更新
+                port->con_state    = CON_MON_ACTIVE;
+                port->con_deadline = now + pdMS_TO_TICKS(CON_MON_QUIET_MS);
+                continue; // 次のMONをすぐ確認
+            }
+        }
+
+        // -------------------------------------------------------
+        // 2. タイムアウト処理
+        // -------------------------------------------------------
+        if (port->con_state == CON_CMD_WAIT) {
+            if ((int32_t)(now - port->con_deadline) >= 0) {
+                // 待機タイムアウト: プロンプトを表示
+                // 起動フェーズ終了: 旧プロンプトと同行にならないよう改行を先行送出
+                if (boot_phase) {
+                    xRingbufferSend(port->to_pc, (uint8_t *)"\r\n", 2, 0);
+                    boot_phase = false;
+                }
+                send_prompt(port);
+                port->con_state = CON_PROMPT;
+            }
+        } else if (port->con_state == CON_MON_ACTIVE) {
+            if ((int32_t)(now - port->con_deadline) >= 0) {
+                // MON 静止: プロンプトを復元
+                send_prompt(port);
+                if (port->line_pos > 0) {
+                    // 入力途中だった内容を再表示
+                    xRingbufferSend(port->to_pc,
+                                    (uint8_t *)port->line_buf, port->line_pos, 0);
+                    port->con_state = CON_TYPING;
+                } else {
+                    port->con_state = CON_PROMPT;
+                }
+            }
+        }
+
+        // -------------------------------------------------------
+        // 3. ユーザー入力処理
+        // -------------------------------------------------------
         size_t size;
         uint8_t *data =
-            (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(100));
+            (uint8_t *)xRingbufferReceive(port->from_pc, &size, pdMS_TO_TICKS(10));
 
         if (data != NULL) {
+            // 起動フェーズ中（boot_phase=true）は CDC 再接続の雑音を破棄
+            // タイムアウトで一度だけプロンプトを出してから入力処理を開始する
+            if (boot_phase) {
+                vRingbufferReturnItem(port->from_pc, (void *)data);
+                continue;
+            }
+
+            // MON 表示中に入力が来たら: MON を止めてプロンプトを出す
+            if (port->con_state == CON_MON_ACTIVE) {
+                send_prompt(port);
+                port->con_state = CON_PROMPT;
+            }
+            // CON_CMD_WAIT 中に入力が来たら: 即プロンプトへ
+            if (port->con_state == CON_CMD_WAIT) {
+                send_prompt(port);
+                port->con_state = CON_PROMPT;
+            }
+
+            // Enter が含まれているか先読み
+            bool enter_pressed = false;
+            for (size_t k = 0; k < size; k++) {
+                if (data[k] == '\r') { enter_pressed = true; break; }
+            }
+
+            // process_command_input 内の send_prompt を抑制（状態機械が管理）
+            port->con_suppress_prompt = 1;
             process_command_input(port, data, size);
+            port->con_suppress_prompt = 0;
+
+            if (enter_pressed) {
+                port->con_state    = CON_CMD_WAIT;
+                port->con_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(CON_CMD_WAIT_MS);
+            } else {
+                port->con_state = (port->line_pos > 0) ? CON_TYPING : CON_PROMPT;
+            }
+
             vRingbufferReturnItem(port->from_pc, (void *)data);
         }
     }
