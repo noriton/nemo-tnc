@@ -87,21 +87,16 @@ size_t decode_callsign(const uint8_t *in_buf, char *callsign, uint8_t *ssid)
 }
 
 /**
- * @brief 送信先コールサインの検証とAX.25アドレスへのエンコード
+ * @brief コールサイン文字列をクリーニングしてベース部とSSIDに分離する（内部ヘルパー）
  *
- * 特殊アドレス (CQ, BEACON, IDENT 等) はコールサイン検証を省略し、
- * 6文字未満の場合はスペース埋めしてビットシフト格納する。
- * それ以外は callsign_validate() で検証し、有効な場合のみエンコードする。
- * 記号類は除去し、SSIDは省略時 0 とする。
- *
- * @param out_buf 7バイトの出力先
- * @param dest    送信先コールサイン文字列
- * @param is_last アドレスフィールドの最後かどうか
- * @return        1=有効(エンコード済み), 0=無効
+ * @param dest     入力文字列
+ * @param out_base ベース部の格納先（7バイト以上）
+ * @param out_ssid SSIDの格納先
+ * @return 1=成功, 0=失敗
  */
-int ax25_encode_dest(uint8_t out_buf[7], const char *dest, bool is_last)
+static int parse_address(const char *dest, char out_base[7], int *out_ssid)
 {
-    if (dest == NULL || out_buf == NULL) return 0;
+    if (dest == NULL) return 0;
 
     // 1. 記号類を除去して大文字化（英数字と'-'のみ残す）
     char cleaned[16] = {0};
@@ -115,14 +110,14 @@ int ax25_encode_dest(uint8_t out_buf[7], const char *dest, bool is_last)
     if (ci == 0) return 0;
 
     // 2. ベース部とSSIDを分離（SSIDデフォルト=0）
-    char base[7] = {0};
-    int  ssid    = 0;
-    char *dash   = strchr(cleaned, '-');
+    int  ssid = 0;
+    char *dash = strchr(cleaned, '-');
 
     if (dash != NULL) {
         int base_len = (int)(dash - cleaned);
         if (base_len == 0 || base_len > 6) return 0;
-        strncpy(base, cleaned, (size_t)base_len);
+        memset(out_base, 0, 7);
+        strncpy(out_base, cleaned, (size_t)base_len);
         // '-'以降を数値変換（1〜2桁、0〜15）
         int v = 0, digits = 0;
         for (char *p = dash + 1; *p != '\0'; p++) {
@@ -133,18 +128,35 @@ int ax25_encode_dest(uint8_t out_buf[7], const char *dest, bool is_last)
         if (digits > 0 && v <= 15) ssid = v;
     } else {
         if (ci > 6) return 0;
-        strncpy(base, cleaned, 6);
+        memset(out_base, 0, 7);
+        strncpy(out_base, cleaned, 6);
     }
 
-    // 3. 特殊アドレスチェック → バリデーション省略でそのままエンコード
+    *out_ssid = ssid;
+    return 1;
+}
+
+/**
+ * @brief 送信先コールサインがAX.25で使用可能か検証する
+ *
+ * 特殊アドレス (CQ, BEACON, IDENT 等) は常に有効。
+ * それ以外は callsign_validate() で検証する。
+ *
+ * @param dest 検証するコールサイン文字列
+ * @return true=有効, false=無効
+ */
+bool ax25_validate_dest(const char *dest)
+{
+    char base[7];
+    int  ssid;
+    if (!parse_address(dest, base, &ssid)) return false;
+
+    // 特殊アドレスは常に有効
     for (int i = 0; AX25_SPECIAL_DEST[i] != NULL; i++) {
-        if (strcmp(base, AX25_SPECIAL_DEST[i]) == 0) {
-            encode_callsign(out_buf, base, (uint8_t)ssid, is_last);
-            return 1;
-        }
+        if (strcmp(base, AX25_SPECIAL_DEST[i]) == 0) return true;
     }
 
-    // 4. 通常コールサインのバリデーション
+    // 通常コールサインのバリデーション
     char validate_buf[16];
     if (ssid > 0) {
         snprintf(validate_buf, sizeof(validate_buf), "%s-%d", base, ssid);
@@ -152,7 +164,27 @@ int ax25_encode_dest(uint8_t out_buf[7], const char *dest, bool is_last)
         strncpy(validate_buf, base, sizeof(validate_buf) - 1);
         validate_buf[sizeof(validate_buf) - 1] = '\0';
     }
-    if (!callsign_validate(validate_buf)) return 0;
+    return callsign_validate(validate_buf);
+}
+
+/**
+ * @brief 送信先コールサインをAX.25アドレスにエンコードする
+ *
+ * バリデーションは行わない。呼び出し前に ax25_validate_dest() で検証すること。
+ * 特殊アドレス (CQ, BEACON, IDENT 等) もそのままエンコードする。
+ *
+ * @param out_buf 7バイトの出力先
+ * @param dest    送信先コールサイン文字列
+ * @param is_last アドレスフィールドの最後かどうか
+ * @return        1=成功, 0=パースエラー
+ */
+int ax25_encode_dest(uint8_t out_buf[7], const char *dest, bool is_last)
+{
+    if (out_buf == NULL) return 0;
+
+    char base[7];
+    int  ssid;
+    if (!parse_address(dest, base, &ssid)) return 0;
 
     encode_callsign(out_buf, base, (uint8_t)ssid, is_last);
     return 1;
