@@ -59,15 +59,25 @@ bool ax25_fcs_verify(const uint8_t *frame, size_t len);
 
 
 /**
- * @brief 送信先コールサインの検証とAX.25アドレスへのエンコード
+ * @brief 送信先コールサインがAX.25で使用可能か検証する
  *
- * 特殊アドレス (CQ, BEACON, IDENT 等) はコールサイン検証を省略する。
- * 記号類は除去し、SSIDは省略時 0 とする。
+ * 特殊アドレス (CQ, BEACON, IDENT 等) は常に有効。
+ * それ以外は callsign_validate() で検証する。
+ *
+ * @param dest 検証するコールサイン文字列
+ * @return true=有効, false=無効
+ */
+bool ax25_validate_dest(const char *dest);
+
+/**
+ * @brief 送信先コールサインをAX.25アドレスにエンコードする
+ *
+ * バリデーションは行わない。呼び出し前に ax25_validate_dest() で検証すること。
  *
  * @param out_buf 7バイトの出力先
  * @param dest    送信先コールサイン文字列
  * @param is_last アドレスフィールドの最後かどうか
- * @return        1=有効(エンコード済み), 0=無効
+ * @return        1=成功, 0=パースエラー
  */
 int ax25_encode_dest(uint8_t out_buf[7], const char *dest, bool is_last);
 

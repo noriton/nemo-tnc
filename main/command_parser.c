@@ -304,11 +304,12 @@ int cmd_uisend(int argc, char **argv)
     const char *dest_call = argv[1];
 
     // DEST_CALLのバリデーション（CQ/BEACON等の特殊アドレスも通す）
-    uint8_t dest_ax25[7];
-    if (!ax25_encode_dest(dest_ax25, dest_call, false)) {
+    if (!ax25_validate_dest(dest_call)) {
         cmd_response("Error: Invalid callsign: %s\r\n", dest_call);
         return 1;
     }
+    uint8_t dest_ax25[7];
+    ax25_encode_dest(dest_ax25, dest_call, false);
 
     // メッセージ部分はスペース区切りの全引数を結合するか、
     // 簡易的に argv[2] 以降を連結する（ここでは argv[2] 以降を使用）
