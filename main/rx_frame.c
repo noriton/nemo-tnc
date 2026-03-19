@@ -2,7 +2,6 @@
 #include "tnc_buffer.h"
 #include "rawpacket.h"
 #include "ax25.h"
-#include "tinyusb_cdc_acm.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
@@ -12,6 +11,10 @@
 
 static const char *TAG = "RX_FRAME";
 
+// Hex ダンプの最大バッファサイズ
+// ヘッダ(20) + バイトあたり3文字 × RAW_PACKET_MAX_LEN_WITH_FCS(330) + 改行分 + 末尾改行
+#define HEX_DUMP_BUF_SIZE (20 + RAW_PACKET_MAX_LEN_WITH_FCS * 3 + 44 + 2)
+
 
 // ---------------------------------------------------------------------------
 // 1. Hex ダンプ出力
@@ -19,17 +22,20 @@ static const char *TAG = "RX_FRAME";
 
 static void rx_frame_dump_hex(int port_id, const uint8_t *frame, size_t len)
 {
-    tinyusb_cdcacm_write_queue(port_id,
-        (uint8_t *)"\r\n--- RX Frame ---\r\n", 20);
-    for (size_t i = 0; i < len; i++) {
-        char hex[4];
-        sprintf(hex, "%02X ", frame[i]);
-        tinyusb_cdcacm_write_queue(port_id, (uint8_t *)hex, 3);
+    char buf[HEX_DUMP_BUF_SIZE];
+    int pos = 0;
+
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "\r\n--- RX Frame ---\r\n");
+
+    for (size_t i = 0; i < len && pos + 4 < (int)sizeof(buf); i++) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X ", frame[i]);
         if ((i + 1) % 16 == 0) {
-            tinyusb_cdcacm_write_queue(port_id, (uint8_t *)"\r\n", 2);
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "\r\n");
         }
     }
-    tinyusb_cdcacm_write_queue(port_id, (uint8_t *)"\r\n", 2);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "\r\n");
+
+    xRingbufferSend(usb_to_pc[port_id], (uint8_t *)buf, pos, pdMS_TO_TICKS(100));
 }
 
 
@@ -45,15 +51,15 @@ static void rx_frame_decode_and_print(int port_id, const uint8_t *frame,
     int decoded_len = ax25_decode_ui_info(frame, len - 2,  // FCS 2バイトを除外
                                           decoded_info, sizeof(decoded_info));
     if (decoded_len >= 0) {
-        char decode_msg[300];
-        int d_len = snprintf(decode_msg, sizeof(decode_msg),
-                             "Decoded: %s\r\nFCS:%s\r\n", decoded_info, fcs_result);
-        tinyusb_cdcacm_write_queue(port_id, (uint8_t *)decode_msg, d_len);
+        char msg[300];
+        int n = snprintf(msg, sizeof(msg),
+                         "Decoded: %s\r\nFCS:%s\r\n", decoded_info, fcs_result);
+        xRingbufferSend(usb_to_pc[port_id], (uint8_t *)msg, n, pdMS_TO_TICKS(100));
     } else {
-        char err_msg[48];
-        int e_len = snprintf(err_msg, sizeof(err_msg),
-                             "Decode Failed: %d\r\nFCS:%s\r\n", decoded_len, fcs_result);
-        tinyusb_cdcacm_write_queue(port_id, (uint8_t *)err_msg, e_len);
+        char msg[48];
+        int n = snprintf(msg, sizeof(msg),
+                         "Decode Failed: %d\r\nFCS:%s\r\n", decoded_len, fcs_result);
+        xRingbufferSend(usb_to_pc[port_id], (uint8_t *)msg, n, pdMS_TO_TICKS(100));
     }
 }
 
@@ -74,15 +80,14 @@ static void rx_frame_task(void *pvParameters)
             continue;
         }
 
-        int port_id            = item->meta.port_id;
-        const uint8_t *frame   = item->data;
-        size_t len             = item->meta.payload_len;
+        int port_id          = item->meta.port_id;
+        const uint8_t *frame = item->data;
+        size_t len           = item->meta.payload_len;
 
         rx_frame_dump_hex(port_id, frame, len);
         bool fcs_ok = ax25_fcs_verify(frame, len);
         rx_frame_decode_and_print(port_id, frame, len, fcs_ok);
 
-        tinyusb_cdcacm_write_flush(port_id, pdMS_TO_TICKS(10));
         vRingbufferReturnItem(raw_tx_buf, (void *)item);
     }
 }
