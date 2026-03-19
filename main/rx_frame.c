@@ -42,19 +42,28 @@ static void rx_frame_task(void *pvParameters)
         }
         tinyusb_cdcacm_write_queue(port_id, (uint8_t *)"\r\n", 2);
 
-        // 2. AX.25 UIフレームをデコードして情報フィールドを表示
+        // 2. FCS 検証（末尾2バイトが格納値、それ以前を再計算して照合）
+        const char *fcs_result = "NG";
+        if (ax25_len >= 2) {
+            uint16_t fcs_stored = (uint16_t)ax25_frame[ax25_len - 2]
+                                | ((uint16_t)ax25_frame[ax25_len - 1] << 8);
+            uint16_t fcs_calc   = ax25_fcs_calculate(ax25_frame, ax25_len - 2);
+            fcs_result = (fcs_calc == fcs_stored) ? "OK" : "NG";
+        }
+
+        // 3. AX.25 UIフレームをデコードして情報フィールドを表示
         char decoded_info[256];
-        int decoded_len = ax25_decode_ui_info(ax25_frame, ax25_len,
+        int decoded_len = ax25_decode_ui_info(ax25_frame, ax25_len - 2,  // FCS 2バイトを除外
                                               decoded_info, sizeof(decoded_info));
         if (decoded_len >= 0) {
             char decode_msg[300];
             int d_len = snprintf(decode_msg, sizeof(decode_msg),
-                                 "Decoded: %s\r\n", decoded_info);
+                                 "Decoded: %s\r\nFCS:%s\r\n", decoded_info, fcs_result);
             tinyusb_cdcacm_write_queue(port_id, (uint8_t *)decode_msg, d_len);
         } else {
-            char err_msg[32];
+            char err_msg[48];
             int e_len = snprintf(err_msg, sizeof(err_msg),
-                                 "Decode Failed: %d\r\n", decoded_len);
+                                 "Decode Failed: %d\r\nFCS:%s\r\n", decoded_len, fcs_result);
             tinyusb_cdcacm_write_queue(port_id, (uint8_t *)err_msg, e_len);
         }
 

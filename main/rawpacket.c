@@ -98,10 +98,35 @@ static size_t parse_ax25_addr_to_meta(const uint8_t *frame, size_t frame_len,
 
 
 // ---------------------------------------------------------------------------
+// FCS 計算・付加
+// ---------------------------------------------------------------------------
+
+size_t rawpacket_append_fcs(tnc_meta_header_t *meta,
+                             uint8_t *data, size_t data_len,
+                             size_t buf_size)
+{
+    if (meta == NULL || data == NULL || data_len == 0) {
+        return 0;
+    }
+    if (data_len + 2 > buf_size) {
+        ESP_LOGW(TAG, "append_fcs: buffer too small (need %d, have %d)",
+                 (int)(data_len + 2), (int)buf_size);
+        return 0;
+    }
+
+    uint16_t fcs = ax25_fcs_calculate(data, data_len);
+    meta->fcs          = fcs;
+    data[data_len]     = (uint8_t)(fcs & 0xFF);        // LSB first
+    data[data_len + 1] = (uint8_t)((fcs >> 8) & 0xFF);
+    return data_len + 2;
+}
+
+
+// ---------------------------------------------------------------------------
 // パケット組み立て
 // ---------------------------------------------------------------------------
 
-size_t rawpacket_build_ax25_ui(const tnc_meta_header_t *meta,
+size_t rawpacket_build_ax25_ui(tnc_meta_header_t *meta,
                                 const uint8_t *payload,
                                 uint8_t *out_buf,
                                 size_t out_buf_size)
@@ -110,10 +135,10 @@ size_t rawpacket_build_ax25_ui(const tnc_meta_header_t *meta,
         return 0;
     }
 
-    // 必要最小サイズチェック（宛先 + 送信元 + Digi×N + Control + PID + Info）
+    // 必要最小サイズチェック（宛先 + 送信元 + Digi×N + Control + PID + Info + FCS(2)）
     uint8_t digi_count = (meta->digi_count <= TNC_META_MAX_DIGI)
                          ? meta->digi_count : TNC_META_MAX_DIGI;
-    size_t required = AX25_ADDR_LEN * (2 + digi_count) + 2 + meta->payload_len;
+    size_t required = AX25_ADDR_LEN * (2 + digi_count) + 2 + meta->payload_len + 2;
     if (required > out_buf_size) {
         ESP_LOGW(TAG, "Output buffer too small: need %d, have %d", required, out_buf_size);
         return 0;
@@ -162,7 +187,8 @@ size_t rawpacket_build_ax25_ui(const tnc_meta_header_t *meta,
         pos += meta->payload_len;
     }
 
-    return pos;
+    // 7. FCS を計算してメタに格納し、データ末尾に付加
+    return rawpacket_append_fcs(meta, out_buf, pos, out_buf_size);
 }
 
 
@@ -173,12 +199,14 @@ size_t rawpacket_build_ax25_ui(const tnc_meta_header_t *meta,
 /**
  * AX.25生パケットを TNC2 風テキストに整形し usb_to_pc[port_id] へ送る。
  * フォーマット例:
- *   [MON] port0: JH1FBM>CQ,RELAY* [UI pid=F0]: Hello World
+ *   [MON] port0: JH1FBM>CQ,RELAY* [UI pid=F0]: Hello World [FCS:0xE86A OK]
+ *
+ * raw にはFCS付き（末尾2バイト = FCS LSB/MSB）のデータを渡すこと。
  */
 static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_len)
 {
-    // Dest(7) + Src(7) + Ctrl(1) + PID(1) 以上必要
-    if (raw_len < 16) return;
+    // Dest(7) + Src(7) + Ctrl(1) + PID(1) + FCS(2) 以上必要
+    if (raw_len < 18) return;
 
     // 宛先コールサイン
     char dest[12] = {0};
@@ -212,10 +240,17 @@ static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_
         if (is_last) break;
     }
 
-    if (pos + 2 > raw_len) return;
+    // Ctrl + PID + FCS(2) 分が必要
+    if (pos + 4 > raw_len) return;
     uint8_t pid      = raw[pos + 1];
     const char *info = (const char *)&raw[pos + 2];
-    size_t info_len  = raw_len - pos - 2;
+    size_t info_len  = raw_len - pos - 4;   // FCS 2バイトを除外
+
+    // FCS 検証（末尾2バイトが格納値、それ以前を再計算して照合）
+    uint16_t fcs_stored = (uint16_t)raw[raw_len - 2]
+                        | ((uint16_t)raw[raw_len - 1] << 8);
+    uint16_t fcs_calc   = ax25_fcs_calculate(raw, raw_len - 2);
+    const char *fcs_result = (fcs_calc == fcs_stored) ? "OK" : "NG";
 
     // コールサイン文字列 (SSID付き)
     char src_str[16]  = {0};
@@ -229,12 +264,12 @@ static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_
     else
         strncpy(dest_str, dest, sizeof(dest_str) - 1);
 
-    // モニタ行フォーマット (TNC2スタイル)
-    char line[280];
+    // モニタ行フォーマット (TNC2スタイル + FCS表示)
+    char line[320];
     int n = snprintf(line, sizeof(line),
-                     "[MON] port%d: %s>%s%s [UI pid=%02X]: %.*s\r\n",
+                     "[MON] port%d: %s>%s%s [UI pid=%02X]: %.*s [FCS:0x%04X %s]\r\n",
                      port_id, src_str, dest_str, digi_str, pid,
-                     (int)info_len, info);
+                     (int)info_len, info, fcs_stored, fcs_result);
     if (n > 0 && n < (int)sizeof(line)) {
         // mon_ringbuf へ送る（コンソール調停タスクがタイミングを制御する）
         xRingbufferSend(mon_ringbuf[port_id], (uint8_t *)line, (size_t)n,
@@ -291,10 +326,11 @@ static void rawpacket_task(void *pvParameters)
         switch (meta->type) {
 
         case META_TYPE_DATA_UI: {
-            // AX.25 UIフレームとして生パケットを組み立て
-            uint8_t raw_buf[RAW_PACKET_MAX_LEN];
+            // AX.25 UIフレームとして生パケットを組み立て（FCS付加まで含む）
+            uint8_t raw_buf[RAW_PACKET_MAX_LEN_WITH_FCS];
+            tnc_meta_header_t out_meta = *meta;
             size_t raw_len = rawpacket_build_ax25_ui(
-                meta, payload, raw_buf, sizeof(raw_buf));
+                &out_meta, payload, raw_buf, sizeof(raw_buf));
             if (raw_len == 0) {
                 ESP_LOGW(TAG, "Port%d: build_ax25_ui failed", port_id);
                 break;
@@ -306,9 +342,8 @@ static void rawpacket_task(void *pvParameters)
             // raw_tx_buf へ出力（将来: FX.25/物理層への引き渡し用）
             if (raw_tx_buf != NULL) {
                 raw_tx_item_t out;
-                // メタデータをそのまま引き継ぎ、payload_len だけ生パケット長に更新
-                out.meta              = *meta;
-                out.meta.payload_len  = (uint16_t)raw_len;
+                out.meta             = out_meta;
+                out.meta.payload_len = (uint16_t)raw_len;
                 memcpy(out.data, raw_buf, raw_len);
                 BaseType_t res = xRingbufferSend(
                     raw_tx_buf, &out, RAW_TX_ITEM_SIZE(raw_len), pdMS_TO_TICKS(10));
@@ -342,9 +377,18 @@ static void rawpacket_task(void *pvParameters)
 
             if (raw_tx_buf != NULL) {
                 raw_tx_item_t out;
+                memcpy(out.data, payload, ax25_len);
+
+                // FCS を計算してメタに格納し、データ末尾に付加
+                ax25_len = rawpacket_append_fcs(&updated_meta, out.data, ax25_len,
+                                                sizeof(out.data));
+                if (ax25_len == 0) {
+                    ESP_LOGW(TAG, "Port%d: KISS append_fcs failed", port_id);
+                    break;
+                }
+
                 out.meta             = updated_meta;
                 out.meta.payload_len = (uint16_t)ax25_len;
-                memcpy(out.data, payload, ax25_len);
                 BaseType_t res = xRingbufferSend(
                     raw_tx_buf, &out, RAW_TX_ITEM_SIZE(ax25_len), pdMS_TO_TICKS(10));
                 if (res != pdTRUE) {

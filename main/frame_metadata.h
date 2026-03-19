@@ -43,6 +43,8 @@ typedef struct tnc_meta_header {
     tnc_meta_digi_t  digi[TNC_META_MAX_DIGI]; // デジピータアドレス (0〜digi_count-1 が有効)
 
     // --- 以下、将来拡張していくパラメータ領域 ---
+    uint16_t fcs;         // AX.25 FCS (CRC-16-CCITT) 計算値（rawpacket_build_ax25_ui が格納）
+    uint8_t  fcs_pad[2];  // アライメント予約
     // uint8_t fx25_rs_mode; // FX.25のReed-Solomonモード指定など
     // uint8_t tx_delay;     // このパケット特有のTXDELAY指定など
 
