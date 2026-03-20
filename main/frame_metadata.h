@@ -12,7 +12,9 @@
 typedef enum tnc_meta_type {
     META_TYPE_DATA_KISS,     // KISS由来のデータ（AX.25フレーム）
     META_TYPE_DATA_UI,       // トランスペアレント由来のデータ（ペイロードのみ）
-    META_TYPE_CTRL_CMD       // 制御コマンド（設定変更など）
+    META_TYPE_CTRL_CMD,      // 制御コマンド（設定変更など）
+    META_TYPE_MON_TEXT,      // モニタテキスト出力（人間可読フォーマット）→ rx_to_pc へ
+    META_TYPE_RX_FRAME,      // 受信 AX.25 フレーム（生データ + FCS）→ rx_to_pc へ
 } tnc_meta_type_t;
 
 // デジピータ1局分の情報

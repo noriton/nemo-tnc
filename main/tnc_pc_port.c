@@ -3,11 +3,13 @@
 #include "command_parser.h"
 #include "esp_log.h"
 #include "frame_metadata.h"
-#include "kiss_parser.h" // メタデータ定義などを参照
+#include "kiss_parser.h"
 #include "tnc_buffer.h"
 #include "nvs_if.h"
 #include "callsign.h"
+#include "ax25.h"
 #include <string.h>
+#include <stdio.h>
 
 
 void poll_and_display_rx_packets(tnc_port_info_t *port);
@@ -130,7 +132,7 @@ void tnc_pc_ports_init(void)
         // タスク起動
         char task_name[16];
         snprintf(task_name, sizeof(task_name), "pc_port_%d", i);
-        xTaskCreate(pc_port_task, task_name, 4096, &pc_ports[i], 5, NULL);
+        xTaskCreate(pc_port_task, task_name, 8192, &pc_ports[i], 5, NULL);
     }
 }
 
@@ -213,7 +215,7 @@ static void con_erase_line(tnc_port_info_t *port)
  *   CON_CMD_WAIT  : コマンド完了直後。200ms 以内に MON が来たら先に表示。
  *   CON_MON_ACTIVE: MON 表示中。100ms 静止したらプロンプト（＋入力中内容）を復元。
  *   CON_PROMPT    : プロンプト表示済み。MON が来たら行を消去してMON表示へ。
- *   CON_TYPING    : 入力中。MON は mon_ringbuf に保留し Enter 後に表示。
+ *   CON_TYPING    : 入力中。MON は rx_to_pc に保留し Enter 後に表示。
  */
 void run_mode_command(tnc_port_info_t *port)
 {
@@ -230,34 +232,84 @@ void run_mode_command(tnc_port_info_t *port)
         TickType_t now = xTaskGetTickCount();
 
         // -------------------------------------------------------
-        // 1. MON データのポーリング（TYPING 中は保留）
+        // 1. rx_to_pc のポーリング（TYPING 中は保留）
         // -------------------------------------------------------
         if (port->con_state != CON_TYPING) {
-            size_t mon_size;
-            uint8_t *mon_data =
-                (uint8_t *)xRingbufferReceive(mon_ringbuf[port->id], &mon_size, 0);
+            size_t item_size;
+            uint8_t *item_data =
+                (uint8_t *)xRingbufferReceive(rx_to_pc[port->id], &item_size, 0);
 
-            if (mon_data != NULL) {
-                switch (port->con_state) {
-                case CON_CMD_WAIT:
-                case CON_MON_ACTIVE:
-                    // そのまま usb_to_pc へ転送
-                    xRingbufferSend(port->to_pc, mon_data, mon_size, pdMS_TO_TICKS(50));
-                    break;
-                case CON_PROMPT:
-                    // プロンプト行を消去してから表示
-                    con_erase_line(port);
-                    xRingbufferSend(port->to_pc, mon_data, mon_size, pdMS_TO_TICKS(50));
-                    break;
-                default:
-                    xRingbufferSend(port->to_pc, mon_data, mon_size, pdMS_TO_TICKS(50));
-                    break;
+            if (item_data != NULL) {
+                tnc_meta_header_t *meta    = (tnc_meta_header_t *)item_data;
+                uint8_t           *payload = item_data + meta->header_len;
+                size_t             plen    = meta->payload_len;
+
+                // 表示データの決定
+                const uint8_t *display_data = NULL;
+                size_t         display_len  = 0;
+
+                // RX_FRAME: コマンドモードではテキスト形式に変換して表示
+                // KISSモードなど他のモードでは将来ここで分岐して生フレームを送る
+                char *rx_text_buf = NULL;
+                if (meta->type == META_TYPE_MON_TEXT) {
+                    display_data = payload;
+                    display_len  = plen;
+                } else if (meta->type == META_TYPE_RX_FRAME) {
+                    // コマンドモード: hex ダンプ + デコードテキストに変換
+                    // 最大フレーム 330 バイト × 3文字 + ヘッダ + デコード行
+                    size_t alloc = 64 + plen * 3 + (plen / 16) * 2 + 300;
+                    rx_text_buf = pvPortMalloc(alloc);
+                    if (rx_text_buf != NULL) {
+                        int pos = 0;
+                        pos += snprintf(rx_text_buf + pos, alloc - pos,
+                                        "\r\n--- RX Frame (port%d) ---\r\n", meta->port_id);
+                        for (size_t i = 0; i < plen && (size_t)pos + 4 < alloc; i++) {
+                            pos += snprintf(rx_text_buf + pos, alloc - pos,
+                                            "%02X ", payload[i]);
+                            if ((i + 1) % 16 == 0)
+                                pos += snprintf(rx_text_buf + pos, alloc - pos, "\r\n");
+                        }
+                        pos += snprintf(rx_text_buf + pos, alloc - pos, "\r\n");
+                        bool fcs_ok = ax25_fcs_verify(payload, plen);
+                        char info[256];
+                        int info_len = ax25_decode_ui_info(payload, plen - 2,
+                                                           info, sizeof(info));
+                        if (info_len >= 0) {
+                            pos += snprintf(rx_text_buf + pos, alloc - pos,
+                                            "Decoded: %s\r\nFCS:%s\r\n",
+                                            info, fcs_ok ? "OK" : "NG");
+                        } else {
+                            pos += snprintf(rx_text_buf + pos, alloc - pos,
+                                            "Decode Failed\r\nFCS:%s\r\n",
+                                            fcs_ok ? "OK" : "NG");
+                        }
+                        display_data = (uint8_t *)rx_text_buf;
+                        display_len  = (size_t)pos;
+                    }
                 }
-                vRingbufferReturnItem(mon_ringbuf[port->id], mon_data);
-                // MON 着信: MON_ACTIVE へ遷移してデッドライン更新
-                port->con_state    = CON_MON_ACTIVE;
-                port->con_deadline = now + pdMS_TO_TICKS(CON_MON_QUIET_MS);
-                continue; // 次のMONをすぐ確認
+
+                // CON 状態に応じて to_pc へ転送
+                if (display_data != NULL && display_len > 0) {
+                    switch (port->con_state) {
+                    case CON_PROMPT:
+                        // プロンプト行を消去してから表示
+                        con_erase_line(port);
+                        /* fall through */
+                    case CON_CMD_WAIT:
+                    case CON_MON_ACTIVE:
+                    default:
+                        xRingbufferSend(port->to_pc, display_data, display_len,
+                                        pdMS_TO_TICKS(50));
+                        break;
+                    }
+                    // MON 着信: MON_ACTIVE へ遷移してデッドライン更新
+                    port->con_state    = CON_MON_ACTIVE;
+                    port->con_deadline = now + pdMS_TO_TICKS(CON_MON_QUIET_MS);
+                }
+
+                if (rx_text_buf != NULL) vPortFree(rx_text_buf);
+                vRingbufferReturnItem(rx_to_pc[port->id], item_data);
+                continue; // 次のアイテムをすぐ確認
             }
         }
 

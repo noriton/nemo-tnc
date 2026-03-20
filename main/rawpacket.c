@@ -270,9 +270,18 @@ static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_
                      port_id, src_str, dest_str, digi_str, pid,
                      (int)info_len, info, fcs_stored, fcs_result);
     if (n > 0 && n < (int)sizeof(line)) {
-        // mon_ringbuf へ送る（コンソール調停タスクがタイミングを制御する）
-        xRingbufferSend(mon_ringbuf[port_id], (uint8_t *)line, (size_t)n,
-                        pdMS_TO_TICKS(100));
+        // rx_to_pc へ META_TYPE_MON_TEXT としてメタデータ付きで送る
+        uint8_t pkt[sizeof(tnc_meta_header_t) + sizeof(line)];
+        tnc_meta_header_t *hdr = (tnc_meta_header_t *)pkt;
+        memset(hdr, 0, sizeof(tnc_meta_header_t));
+        hdr->version     = TNC_META_VERSION_1;
+        hdr->type        = META_TYPE_MON_TEXT;
+        hdr->header_len  = (uint16_t)sizeof(tnc_meta_header_t);
+        hdr->payload_len = (uint16_t)n;
+        hdr->port_id     = (uint8_t)port_id;
+        memcpy(pkt + sizeof(tnc_meta_header_t), line, (size_t)n);
+        xRingbufferSend(rx_to_pc[port_id], pkt,
+                        sizeof(tnc_meta_header_t) + (size_t)n, pdMS_TO_TICKS(100));
     }
 }
 

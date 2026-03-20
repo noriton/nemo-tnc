@@ -1,67 +1,15 @@
 #include "packet_monitor.h"
 #include "tnc_buffer.h"
 #include "rawpacket.h"
+#include "frame_metadata.h"
 #include "ax25.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
 #include "esp_log.h"
-#include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "PKT_MON";
-
-// Hex ダンプの最大バッファサイズ
-// ヘッダ(20) + バイトあたり3文字 × RAW_PACKET_MAX_LEN_WITH_FCS(330) + 改行分 + 末尾改行
-#define HEX_DUMP_BUF_SIZE (20 + RAW_PACKET_MAX_LEN_WITH_FCS * 3 + 44 + 2)
-
-
-// ---------------------------------------------------------------------------
-// 1. Hex ダンプ出力
-// ---------------------------------------------------------------------------
-
-static void packet_monitor_dump_hex(int port_id, const uint8_t *frame, size_t len)
-{
-    char buf[HEX_DUMP_BUF_SIZE];
-    int pos = 0;
-
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "\r\n--- RX Frame ---\r\n");
-
-    for (size_t i = 0; i < len && pos + 4 < (int)sizeof(buf); i++) {
-        pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X ", frame[i]);
-        if ((i + 1) % 16 == 0) {
-            pos += snprintf(buf + pos, sizeof(buf) - pos, "\r\n");
-        }
-    }
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "\r\n");
-
-    xRingbufferSend(usb_to_pc[port_id], (uint8_t *)buf, pos, pdMS_TO_TICKS(100));
-}
-
-
-// ---------------------------------------------------------------------------
-// 3. デコード＆表示
-// ---------------------------------------------------------------------------
-
-static void packet_monitor_decode_and_print(int port_id, const uint8_t *frame,
-                                             size_t len, bool fcs_ok)
-{
-    const char *fcs_result = fcs_ok ? "OK" : "NG";
-    char decoded_info[256];
-    int decoded_len = ax25_decode_ui_info(frame, len - 2,  // FCS 2バイトを除外
-                                          decoded_info, sizeof(decoded_info));
-    if (decoded_len >= 0) {
-        char msg[300];
-        int n = snprintf(msg, sizeof(msg),
-                         "Decoded: %s\r\nFCS:%s\r\n", decoded_info, fcs_result);
-        xRingbufferSend(usb_to_pc[port_id], (uint8_t *)msg, n, pdMS_TO_TICKS(100));
-    } else {
-        char msg[48];
-        int n = snprintf(msg, sizeof(msg),
-                         "Decode Failed: %d\r\nFCS:%s\r\n", decoded_len, fcs_result);
-        xRingbufferSend(usb_to_pc[port_id], (uint8_t *)msg, n, pdMS_TO_TICKS(100));
-    }
-}
 
 
 // ---------------------------------------------------------------------------
@@ -80,13 +28,21 @@ static void packet_monitor_task(void *pvParameters)
             continue;
         }
 
-        int port_id          = item->meta.port_id;
-        const uint8_t *frame = item->data;
-        size_t len           = item->meta.payload_len;
+        int    port_id   = item->meta.port_id;
+        size_t frame_len = item->meta.payload_len;
 
-        packet_monitor_dump_hex(port_id, frame, len);
-        bool fcs_ok = ax25_fcs_verify(frame, len);
-        packet_monitor_decode_and_print(port_id, frame, len, fcs_ok);
+        // メタデータをコピーして type を META_TYPE_RX_FRAME に変更し、
+        // 生 AX.25 フレームとともに rx_to_pc へ投入する
+        uint8_t pkt[sizeof(tnc_meta_header_t) + RAW_PACKET_MAX_LEN_WITH_FCS];
+        tnc_meta_header_t *hdr = (tnc_meta_header_t *)pkt;
+        *hdr             = item->meta;                       // src/dest/digi 等を引き継ぐ
+        hdr->type        = META_TYPE_RX_FRAME;
+        hdr->header_len  = (uint16_t)sizeof(tnc_meta_header_t);
+        hdr->payload_len = (uint16_t)frame_len;
+        memcpy(pkt + sizeof(tnc_meta_header_t), item->data, frame_len);
+
+        xRingbufferSend(rx_to_pc[port_id], pkt,
+                        sizeof(tnc_meta_header_t) + frame_len, pdMS_TO_TICKS(100));
 
         vRingbufferReturnItem(raw_tx_buf, (void *)item);
     }

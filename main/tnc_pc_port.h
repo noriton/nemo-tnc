@@ -54,7 +54,7 @@ typedef enum con_state {
     CON_CMD_WAIT,    // コマンド完了後 MON 待機中 (200ms)
     CON_MON_ACTIVE,  // MON 表示中（100ms 静止でプロンプトへ）
     CON_PROMPT,      // プロンプト表示済み・入力待ち
-    CON_TYPING,      // 入力中（MON は mon_ringbuf に保留）
+    CON_TYPING,      // 入力中（MON は rx_to_pc に保留）
 } con_state_t;
 
 typedef enum escape_state {
