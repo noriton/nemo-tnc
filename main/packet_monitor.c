@@ -31,17 +31,17 @@ static void packet_monitor_task(void *pvParameters)
         int    port_id   = item->meta.port_id;
         size_t frame_len = item->meta.payload_len;
 
-        // メタデータをコピーして type を META_TYPE_RX_FRAME に変更し、
-        // 生 AX.25 フレームとともに rx_to_pc へ投入する
+        // メタデータをコピーして type を META_TYPE_TX_MON に変更し、
+        // 生 AX.25 フレームとともに rx_ringbuf へ投入する（送信モニタ）
         uint8_t pkt[sizeof(tnc_meta_header_t) + RAW_PACKET_MAX_LEN_WITH_FCS];
         tnc_meta_header_t *hdr = (tnc_meta_header_t *)pkt;
         *hdr             = item->meta;                       // src/dest/digi 等を引き継ぐ
-        hdr->type        = META_TYPE_RX_FRAME;
+        hdr->type        = META_TYPE_TX_MON;
         hdr->header_len  = (uint16_t)sizeof(tnc_meta_header_t);
         hdr->payload_len = (uint16_t)frame_len;
         memcpy(pkt + sizeof(tnc_meta_header_t), item->data, frame_len);
 
-        xRingbufferSend(rx_to_pc[port_id], pkt,
+        xRingbufferSend(rx_ringbuf[port_id], pkt,
                         sizeof(tnc_meta_header_t) + frame_len, pdMS_TO_TICKS(100));
 
         vRingbufferReturnItem(raw_tx_buf, (void *)item);

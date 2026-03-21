@@ -4,12 +4,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/ringbuf.h"
 
-extern RingbufHandle_t usb_from_pc[2]; // PC -> TNC
-extern RingbufHandle_t usb_to_pc[2];   // TNC -> PC
-extern RingbufHandle_t rx_ringbuf[2];
-extern RingbufHandle_t tx_ringbuf[2];
-extern RingbufHandle_t rx_to_pc[2];    // TNC -> PC 受信側データキュー (NOSPLIT, rawpacket → tnc_pc_port)
-// extern RingbufHandle_t mon_ringbuf[2];  // MON出力キュー ※廃止: rx_to_pc へ統合
+extern RingbufHandle_t usb_from_pc[2]; // PC -> TNC (BYTEBUF)
+extern RingbufHandle_t usb_to_pc[2];   // TNC -> PC (BYTEBUF)
+extern RingbufHandle_t rx_ringbuf[2];  // TNC内部 → tnc_pc_port (NOSPLIT, メタ+ペイロード形式)
+                                       // 投入元: rawpacket(MON_TEXT), packet_monitor(TX_MON),
+                                       //         radio受信(RX_FRAME, 将来)
+extern RingbufHandle_t tx_ringbuf[2];  // tnc_pc_port → rawpacket (NOSPLIT)
 
 void tnc_buffer_init(void);
 

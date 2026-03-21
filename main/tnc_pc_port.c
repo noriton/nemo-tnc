@@ -215,7 +215,7 @@ static void con_erase_line(tnc_port_info_t *port)
  *   CON_CMD_WAIT  : コマンド完了直後。200ms 以内に MON が来たら先に表示。
  *   CON_MON_ACTIVE: MON 表示中。100ms 静止したらプロンプト（＋入力中内容）を復元。
  *   CON_PROMPT    : プロンプト表示済み。MON が来たら行を消去してMON表示へ。
- *   CON_TYPING    : 入力中。MON は rx_to_pc に保留し Enter 後に表示。
+ *   CON_TYPING    : 入力中。MON は rx_ringbuf に保留し Enter 後に表示。
  */
 void run_mode_command(tnc_port_info_t *port)
 {
@@ -232,12 +232,12 @@ void run_mode_command(tnc_port_info_t *port)
         TickType_t now = xTaskGetTickCount();
 
         // -------------------------------------------------------
-        // 1. rx_to_pc のポーリング（TYPING 中は保留）
+        // 1. rx_ringbuf のポーリング（TYPING 中は保留）
         // -------------------------------------------------------
         if (port->con_state != CON_TYPING) {
             size_t item_size;
             uint8_t *item_data =
-                (uint8_t *)xRingbufferReceive(rx_to_pc[port->id], &item_size, 0);
+                (uint8_t *)xRingbufferReceive(rx_ringbuf[port->id], &item_size, 0);
 
             if (item_data != NULL) {
                 tnc_meta_header_t *meta    = (tnc_meta_header_t *)item_data;
@@ -254,15 +254,19 @@ void run_mode_command(tnc_port_info_t *port)
                 if (meta->type == META_TYPE_MON_TEXT) {
                     display_data = payload;
                     display_len  = plen;
-                } else if (meta->type == META_TYPE_RX_FRAME) {
+                } else if (meta->type == META_TYPE_TX_MON
+                           || meta->type == META_TYPE_RX_FRAME) {
                     // コマンドモード: hex ダンプ + デコードテキストに変換
-                    // 最大フレーム 330 バイト × 3文字 + ヘッダ + デコード行
+                    // TX_MON = 送信モニタ（自局が送信したフレーム）
+                    // RX_FRAME = 無線受信フレーム
+                    const char *label = (meta->type == META_TYPE_TX_MON)
+                                        ? "TX MON" : "RX Frame";
                     size_t alloc = 64 + plen * 3 + (plen / 16) * 2 + 300;
                     rx_text_buf = pvPortMalloc(alloc);
                     if (rx_text_buf != NULL) {
                         int pos = 0;
                         pos += snprintf(rx_text_buf + pos, alloc - pos,
-                                        "\r\n--- RX Frame (port%d) ---\r\n", meta->port_id);
+                                        "\r\n--- %s (port%d) ---\r\n", label, meta->port_id);
                         for (size_t i = 0; i < plen && (size_t)pos + 4 < alloc; i++) {
                             pos += snprintf(rx_text_buf + pos, alloc - pos,
                                             "%02X ", payload[i]);
@@ -308,7 +312,7 @@ void run_mode_command(tnc_port_info_t *port)
                 }
 
                 if (rx_text_buf != NULL) vPortFree(rx_text_buf);
-                vRingbufferReturnItem(rx_to_pc[port->id], item_data);
+                vRingbufferReturnItem(rx_ringbuf[port->id], item_data);
                 continue; // 次のアイテムをすぐ確認
             }
         }
