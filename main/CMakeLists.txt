@@ -17,6 +17,7 @@ idf_component_register(SRCS
     "callsign.c"
     "rawpacket.c"
     "packet_monitor.c"
+    "ax25_hdlc.c"
 INCLUDE_DIRS "."
 PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console
 )
