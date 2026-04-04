@@ -2,8 +2,16 @@
 #include <string.h>
 
 // ---------------------------------------------------------------------------
-// ビット書き込みヘルパー（LSBファースト）
+// ビット読み書きヘルパー（LSBファースト）
 // ---------------------------------------------------------------------------
+
+/**
+ * バッファの in_pos 番目のビットを読む（LSB first）
+ */
+static inline uint8_t read_bit(const uint8_t *buf, size_t in_pos)
+{
+    return (buf[in_pos >> 3] >> (in_pos & 7u)) & 1u;
+}
 
 /**
  * バッファの bit_pos 番目のビットに bit を書き込む
@@ -96,4 +104,53 @@ size_t ax25_hdlc_frame(const uint8_t *in_data, size_t in_len,
     if (out_pad_bits) *out_pad_bits = pad;
 
     return bit_pos >> 3;  // バイト数 = ビット数 / 8（パディング後は常に整数）
+}
+
+// ---------------------------------------------------------------------------
+// HDLCデスタッフィング（RX側）
+// ---------------------------------------------------------------------------
+
+int ax25_hdlc_destuff(const uint8_t *in_buf, size_t in_bits,
+                       uint8_t *out_buf, size_t out_size,
+                       size_t *out_len)
+{
+    if (in_buf == NULL || out_buf == NULL || out_size == 0) return -2;
+
+    memset(out_buf, 0, out_size);
+
+    size_t in_pos  = 0;   // 入力ビット位置
+    size_t out_pos = 0;   // 出力ビット位置
+    int    ones    = 0;   // 直前の連続する1ビット数
+
+    while (in_pos < in_bits) {
+        uint8_t bit = read_bit(in_buf, in_pos++);
+
+        if (bit) {
+            ones++;
+            if (ones == 6) {
+                // 6連続1 = アボートシーケンス
+                return -1;
+            }
+            // 有効な1ビットを出力
+            if ((out_pos >> 3) >= out_size) return -2;
+            out_buf[out_pos >> 3] |= (uint8_t)(1u << (out_pos & 7u));
+            out_pos++;
+        } else {
+            if (ones == HDLC_STUFF_LEN) {
+                // 5連続1の後の0 = スタッフビット: 捨てる
+                ones = 0;
+            } else {
+                // 通常の0ビットを出力（バッファは memset(0) 済み）
+                ones = 0;
+                if ((out_pos >> 3) >= out_size) return -2;
+                out_pos++;  // 0ビットは書き込み不要
+            }
+        }
+    }
+
+    // デスタッフ後がバイト境界に整合しているか確認
+    if (out_pos & 7u) return -3;
+
+    if (out_len) *out_len = out_pos >> 3;
+    return 0;
 }
