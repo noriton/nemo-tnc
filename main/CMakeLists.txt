@@ -12,7 +12,6 @@ idf_component_register(SRCS
 
     "ax25/ax25.c"
     "ax25/ax25_fcs.c"
-    "ax25/ax25_frame_build.c"
     "ax25/ax25_hdlc.c"
     "ax25/ax25_utils.c"
     "ax25/callsign.c"
