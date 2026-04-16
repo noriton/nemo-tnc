@@ -287,7 +287,7 @@ static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_
 
 
 // ---------------------------------------------------------------------------
-// 受信タスク（ポートごとに1つ起動）
+// 送信タスク（ポートごとに1つ起動）
 // ---------------------------------------------------------------------------
 
 static void rawpacket_task(void *pvParameters)

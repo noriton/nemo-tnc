@@ -1,4 +1,5 @@
 #include "ax25_hdlc.h"
+#include "../fx25/bitstaff.h"
 #include <string.h>
 
 // ---------------------------------------------------------------------------
@@ -68,25 +69,9 @@ size_t ax25_hdlc_frame(const uint8_t *in_data, size_t in_len,
     if (write_byte_raw(out_buf, out_buf_size, &bit_pos, HDLC_FLAG) != 0) return 0;
 
     // 3. データ + ビットスタッフィング
-    int ones = 0;   // 直前の連続する1ビット数
-    for (size_t i = 0; i < in_len; i++) {
-        for (int b = 0; b < 8; b++) {
-            uint8_t bit = (in_data[i] >> b) & 1u;
-
-            if (write_bit(out_buf, out_buf_size, &bit_pos, bit) != 0) return 0;
-
-            if (bit) {
-                ones++;
-                if (ones == HDLC_STUFF_LEN) {
-                    // 5連続1の後にスタッフビット0を挿入
-                    if (write_bit(out_buf, out_buf_size, &bit_pos, 0) != 0) return 0;
-                    ones = 0;
-                }
-            } else {
-                ones = 0;
-            }
-        }
-    }
+    // bit_pos はフラグ書き込み後の時点で常にバイト境界に整合している
+    int stuffed_bits = hdlc_stuff_frame(in_data, (int)in_len, out_buf + (bit_pos >> 3));
+    bit_pos += (size_t)stuffed_bits;
 
     // 4. 終了フラグ（ビットスタッフィングなし）
     if (write_byte_raw(out_buf, out_buf_size, &bit_pos, HDLC_FLAG) != 0) return 0;
