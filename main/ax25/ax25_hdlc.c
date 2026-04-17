@@ -1,5 +1,5 @@
 #include "ax25_hdlc.h"
-#include "../fx25/bitstaff.h"
+#include "bitstaff.h"
 #include <string.h>
 
 // ---------------------------------------------------------------------------

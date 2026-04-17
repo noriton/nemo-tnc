@@ -21,7 +21,7 @@ idf_component_register(SRCS
     "packet/rawpacket.c"
     "packet/packet_monitor.c"
 
-    "modem/tx_frame.c"
+    "packet/tx_frame.c"
 
 INCLUDE_DIRS "." "ax25" "port" "packet" "hw" "modem"
 PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console
