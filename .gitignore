@@ -85,3 +85,8 @@ Desktop.ini
 *.sln.docstates # Visual Studio
 
 setup_idf.ps1
+
+# Sourcetrail project files
+*.srctrlbm
+*.srctrldb
+*.srctrlprj
