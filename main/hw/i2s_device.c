@@ -15,7 +15,7 @@ i2s_chan_handle_t tx_chan;
 i2s_chan_handle_t rx_chan;
 
 
-void init_nemo_tnc_hardware(void)
+void init_v4200_and_i2s(void)
 {
     // 1. V4220Mのハードウェアリセットシーケンス
     gpio_set_direction(CODEC_RST_PIN, GPIO_MODE_OUTPUT);
@@ -73,7 +73,7 @@ void tnc_processing_task(void *pvParameters)
     size_t bytes_read = 0;
     size_t bytes_written = 0;
 
-    init_nemo_tnc_hardware();
+    init_v4200_and_i2s();
 
     // DSP処理ループ
     for (;;) {
