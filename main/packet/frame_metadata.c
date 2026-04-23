@@ -2,6 +2,17 @@
 #include "frame_metadata.h"
 #include "tnc_pc_port.h"
 
+/**
+ * @brief メタデータヘッダとペイロードを連結して送信キュー用バッファに格納する
+ *
+ * buffer の先頭に tnc_meta_header_t を書き込み、その直後にペイロードをコピーする。
+ * リングバッファへの投入は呼び出し元が行う想定。
+ *
+ * @param buffer       出力バッファ（sizeof(tnc_meta_header_t) + payload_size 以上）
+ * @param payload      送信するペイロードデータ
+ * @param payload_size ペイロードのバイト数
+ * @return 書き込んだ合計バイト数（ヘッダ + ペイロード）、バッファ不足時は 0
+ */
 size_t enqueue_packet_to_tx(uint8_t *buffer, uint8_t *payload, size_t payload_size)
 {
     // 1. ヘッダとペイロードを合わせた全体のサイズを計算

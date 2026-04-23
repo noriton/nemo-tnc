@@ -197,11 +197,15 @@ size_t rawpacket_build_ax25_ui(tnc_meta_header_t *meta,
 // ---------------------------------------------------------------------------
 
 /**
- * AX.25生パケットを TNC2 風テキストに整形し usb_to_pc[port_id] へ送る。
+ * @brief AX.25生パケットを TNC2 風テキストに整形し rx_ringbuf へ送る
+ *
+ * META_TYPE_MON_TEXT としてメタデータを付けてリングバッファに投入する。
  * フォーマット例:
  *   [MON] port0: JH1FBM>CQ,RELAY* [UI pid=F0]: Hello World [FCS:0xE86A OK]
  *
- * raw にはFCS付き（末尾2バイト = FCS LSB/MSB）のデータを渡すこと。
+ * @param port_id  出力先ポート番号
+ * @param raw      FCS付き AX.25 生パケット（末尾2バイト = FCS LSB/MSB）
+ * @param raw_len  raw のバイト数（FCS 2バイトを含む）
  */
 static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_len)
 {
@@ -290,6 +294,16 @@ static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_
 // 送信タスク（ポートごとに1つ起動）
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief 送信処理タスク本体（ポートごとに1インスタンス起動）
+ *
+ * tx_ringbuf[port_id] からメタデータ付きパケットを受け取り、
+ * type に応じて以下の処理を行う:
+ *   - META_TYPE_DATA_UI   : AX.25 UIフレームを組み立てて raw_tx_buf へ投入
+ *   - META_TYPE_DATA_KISS : アドレス解析・FCS付加して raw_tx_buf へ転送
+ *
+ * @param pvParameters ポート番号 (int にキャスト)
+ */
 static void rawpacket_task(void *pvParameters)
 {
     int port_id = (int)(intptr_t)pvParameters;

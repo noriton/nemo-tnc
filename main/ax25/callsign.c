@@ -9,16 +9,16 @@ void callsign_normalize(char *call)
     }
 }
 
-/*
- * BASEのITU-R M.1033構造チェック
+/**
+ * @brief コールサイン BASE 部の ITU-R M.1033 構造チェック（内部ヘルパー）
  *
- * BASE = PREFIX(1〜2文字の英数字) + AREA(1桁の数字) + SUFFIX(1〜5文字の英数字)
- * 総長: 3〜8文字
+ * BASE = PREFIX(1〜2英数字) + AREA(1桁数字) + SUFFIX(1〜5英数字)、総長 3〜8 文字。
+ * prefix_len=1 を先に試し、AREA 数字が続かなければ prefix_len=2 を試みる。
+ * 例: W1AW, JH1FBM, VK2FABC, 8J1RL100（記念局）
  *
- * 例: W1AW, JH1FBM, VK2ABC, 9A1AA, 7Z1HL, VK2FABC, 8J1RL100 (記念局)
- *
- * 解析方針:
- *   prefix_len=1 を先に試し、エリア数字が続かなければ prefix_len=2 を試みる。
+ * @param base     BASE 文字列（大文字化済み）
+ * @param base_len BASE の文字数
+ * @return 1: 有効, 0: 無効
  */
 static int validate_base(const char *base, int base_len)
 {

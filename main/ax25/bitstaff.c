@@ -23,6 +23,13 @@ UnstuffDecodeResult_t unstuff_byte_table[6][256];
 
 // --- テーブル初期化関数 (起動時に1回だけ呼ぶ) ---
 
+/**
+ * @brief HDLC スタッフィング/アンスタッフィング用ルックアップテーブルを初期化する
+ *
+ * 起動時に 1 回だけ呼び出すこと。
+ * stuff_byte_table[state][byte] および unstuff_byte_table[state][byte] を生成する。
+ * state は直前の連続する 1 ビット数 (0〜5)、byte は処理対象の 1 バイト値 (0〜255)。
+ */
 void init_hdlc_tables(void)
 {
     for (int state = 0; state < 6; state++) {

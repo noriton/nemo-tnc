@@ -4,10 +4,10 @@ idf_component_register(SRCS
     "hw/usb_descriptors.c"
     "hw/tnc_init.c"
     "hw/indicator.c"
+    "hw/nvs_if.c"
 
     "port/tnc_buffer.c"
     "port/command_parser.c"
-    "port/nvs_if.c"
     "port/tnc_pc_port.c"
 
     "ax25/ax25.c"

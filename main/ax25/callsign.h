@@ -17,12 +17,19 @@
 #define CALLSIGN_BUFSIZE 16
 
 /**
- * コールサインを大文字に正規化する（インプレース）
+ * @brief コールサインを大文字に正規化する（インプレース）
+ *
+ * @param call 正規化する文字列（NULL 終端、インプレース書き換え）
  */
 void callsign_normalize(char *call);
 
 /**
- * コールサインの妥当性チェック
+ * @brief コールサインの妥当性チェック
+ *
+ * ITU-R M.1033 構造 (PREFIX + AREA + SUFFIX) に基づいて検証する。
+ * オプションで /secondary および -SSID(0〜15) を許容する。
+ *
+ * @param call 検証するコールサイン文字列（NULL 終端）
  * @return 1: 正当, 0: 不正
  */
 int callsign_validate(const char *call);

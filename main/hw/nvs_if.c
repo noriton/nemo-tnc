@@ -150,7 +150,7 @@ esp_err_t nvs_load_port_mycall_idx(int port_id, int *idx, int default_idx)
 esp_err_t nvs_save_port_mode(int port_id, int portmode)
 {
     const char *s = NULL;
-    
+
     // 数値定数に対応する識別文字列をテーブルから探す
     for (int i = 0; i < PORT_MODE_MAX; i++) {
         if (tnc_mode_table[i].mode == portmode) {
@@ -172,12 +172,12 @@ esp_err_t nvs_save_port_mode(int port_id, int portmode)
 
     char key[16];
     snprintf(key, sizeof(key), "port%d_mode", port_id);
-    
+
     err = nvs_set_str(my_handle, key, s);
     if (err == ESP_OK) {
         err = nvs_commit(my_handle);
     }
-    
+
     nvs_close(my_handle);
     return err;
 }
@@ -186,7 +186,7 @@ esp_err_t nvs_load_port_mode(int *portmode, int port_id, int default_mode)
 {
     *portmode = default_mode;
     nvs_handle_t my_handle;
-    
+
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &my_handle);
     if (err != ESP_OK) {
         return err;
@@ -194,7 +194,7 @@ esp_err_t nvs_load_port_mode(int *portmode, int port_id, int default_mode)
 
     char key[16];
     snprintf(key, sizeof(key), "port%d_mode", port_id);
-    
+
     char mode_str[8];
     size_t str_len = sizeof(mode_str);
     err = nvs_get_str(my_handle, key, mode_str, &str_len);

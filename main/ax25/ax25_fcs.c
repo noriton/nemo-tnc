@@ -42,7 +42,14 @@ static const uint16_t crc16_table[256] = {
 };
 
 /**
- * @brief AX.25 FCS (CRC-16-CCITT) calculation
+ * @brief AX.25 FCS (CRC-16-CCITT) を計算する
+ *
+ * LSB ファースト / Reflected ルックアップテーブルを使用。
+ * 多項式: 0x1021 (Reflected: 0x8408)、初期値: 0xFFFF、最終 XOR: 0xFFFF
+ *
+ * @param data FCS 計算対象データ（フラグバイトを除いたフレーム本体）
+ * @param len  data のバイト数
+ * @return 計算された FCS 値 (16bit)
  */
 uint16_t ax25_fcs_calculate(const uint8_t *data, size_t len)
 {

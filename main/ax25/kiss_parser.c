@@ -4,7 +4,9 @@
 #include "kiss_parser.h"
 
 /**
- * 初期化
+ * @brief KISS パーサーコンテキストを初期化する
+ *
+ * @param ctx 初期化対象のパーサーコンテキスト
  */
 void kiss_init(kiss_context_t *ctx)
 {
@@ -16,7 +18,13 @@ void kiss_init(kiss_context_t *ctx)
 }
 
 /**
- * ストリーム解析とパケット送出
+ * @brief KISS ストリームを解析し、完成したフレームをリングバッファへ投入する
+ *
+ * @param ctx       パーサーコンテキスト（呼び出し間で状態を保持）
+ * @param data      受信データバッファ
+ * @param len       data のバイト数
+ * @param port_id   メタデータに記録するポート番号
+ * @param target_rb 完成フレームの投入先 No-Split リングバッファ
  */
 void kiss_process_stream(kiss_context_t *ctx, const uint8_t *data, size_t len, int port_id, RingbufHandle_t target_rb)
 {

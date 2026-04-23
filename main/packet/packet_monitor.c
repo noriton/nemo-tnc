@@ -16,6 +16,15 @@ static const char *TAG = "PKT_MON";
 // タスク本体
 // ---------------------------------------------------------------------------
 
+/**
+ * @brief パケットモニタタスク本体
+ *
+ * raw_tx_buf から raw_tx_item_t を受け取り、メタデータの type を
+ * META_TYPE_TX_MON に書き換えて rx_ringbuf へ投入する。
+ * これにより送信フレームを PC 側モニタ画面に折り返し表示できる。
+ *
+ * @param pvParameters 未使用
+ */
 static void packet_monitor_task(void *pvParameters)
 {
     size_t item_size;

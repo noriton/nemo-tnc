@@ -27,13 +27,24 @@ typedef struct kiss_context {
 // --- API ---
 
 /**
- * パーサーの初期化
+ * @brief KISS パーサーコンテキストを初期化する
+ *
+ * @param ctx 初期化対象のパーサーコンテキスト
  */
 void kiss_init(kiss_context_t *ctx);
 
 /**
- * ストリームデータを解析し、フレームが完成したらメタデータを付けて
- * 指定されたリングバッファ (No-Split) に投入する
+ * @brief KISS ストリームを解析し、完成したフレームをリングバッファへ投入する
+ *
+ * FEND で区切られた KISS フレームを逐次処理し、コマンドバイトが 0x00
+ * （データフレーム）であれば tnc_meta_header_t を付けて target_rb へ送出する。
+ * バイトスタッフィング（FESC/TFEND/TFESC）を自動解除する。
+ *
+ * @param ctx       パーサーコンテキスト（呼び出し間で状態を保持）
+ * @param data      受信データバッファ
+ * @param len       data のバイト数
+ * @param port_id   メタデータに記録するポート番号
+ * @param target_rb 完成フレームの投入先 No-Split リングバッファ
  */
 void kiss_process_stream(kiss_context_t *ctx, const uint8_t *data, size_t len, int port_id, RingbufHandle_t target_rb);
 
