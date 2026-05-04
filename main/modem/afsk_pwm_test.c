@@ -1,6 +1,6 @@
 #include "afsk_pwm_test.h"
 #include "driver/ledc.h"
-#include "esp_rom_sys.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -28,64 +28,75 @@ static const char *TAG = "AFSK_TEST";
 #define AFSK_LEDC_CHANNEL  LEDC_CHANNEL_0
 #define AFSK_LEDC_DUTY     128          // 8bit分解能で50%デューティ(矩形波)
 
-// HDLC 出力バッファ（スタック節約のため static）
+// HDLC 出力バッファ（static: スタック節約）
 static uint8_t s_hdlc_buf[AX25_HDLC_OUT_MAX(RAW_PACKET_MAX_LEN_WITH_FCS, 20)];
 
-// NRZI 状態: true=mark(1200Hz), false=space(2200Hz)
-static bool s_nrzi_state;
+// ---------------------------------------------------------------------------
+// 送信ステート（esp_timer コールバックと AFSK タスクで共有）
+// timer callback は esp_timer タスクから呼ばれ AFSK タスクは ulTaskNotifyTake
+// でブロックしているため、送信中に両者が同時にステートを書き換えることはない。
+// ---------------------------------------------------------------------------
+static volatile size_t  s_bit_idx;      // 次に送出するビット位置
+static volatile size_t  s_bit_total;    // 総ビット数
+static volatile bool    s_nrzi_state;   // NRZI 現在状態: true=mark(1200Hz)
+
+static esp_timer_handle_t s_bit_timer = NULL;
+static TaskHandle_t       s_tx_task   = NULL;
 
 // ---------------------------------------------------------------------------
-// 内部ヘルパー
+// LEDC ヘルパー
 // ---------------------------------------------------------------------------
 
-/**
- * @brief LEDC タイマー周波数を mark/space に切り替える
- *
- * @param is_mark true=1200Hz(mark), false=2200Hz(space)
- */
 static inline void afsk_set_freq(bool is_mark)
 {
     ledc_set_freq(LEDC_LOW_SPEED_MODE, AFSK_LEDC_TIMER,
                   is_mark ? AFSK_MARK_HZ : AFSK_SPACE_HZ);
 }
 
-/**
- * @brief デューティを50%にして送信開始する
- */
 static void afsk_tx_on(void)
 {
     ledc_set_duty(LEDC_LOW_SPEED_MODE, AFSK_LEDC_CHANNEL, AFSK_LEDC_DUTY);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, AFSK_LEDC_CHANNEL);
 }
 
-/**
- * @brief デューティを0にして無音にする
- */
 static void afsk_tx_off(void)
 {
     ledc_set_duty(LEDC_LOW_SPEED_MODE, AFSK_LEDC_CHANNEL, 0);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, AFSK_LEDC_CHANNEL);
 }
 
+// ---------------------------------------------------------------------------
+// esp_timer コールバック: 1ビット送出 → 次ビットのタイマーを再始動
+//
+// esp_timer は専用タスクから呼ばれる（ISR ではない）。
+// AFSK タスクは ulTaskNotifyTake でブロック中なので競合しない。
+// ---------------------------------------------------------------------------
+
 /**
- * @brief ビット列を NRZI エンコードしながら 1 ビットずつ送出する
+ * @brief 1ビット送出コールバック
  *
- * AX.25 HDLC の出力は LSB ファースト（buf[0] の bit0 が最初に送信）。
- * NRZI 則: 0 → s_nrzi_state を反転（周波数切替）、1 → 維持。
- *
- * @param buf       HDLC フレームバッファ（LSB first）
- * @param bit_count 送出するビット数
+ * NRZI エンコードして LEDC 周波数を更新し、次のビットを AFSK_BIT_US 後に予約する。
+ * 全ビット送出後は PWM を無音にして AFSK タスクへ通知する。
  */
-static void afsk_send_bits(const uint8_t *buf, size_t bit_count)
+static void afsk_bit_timer_cb(void *arg)
 {
-    for (size_t i = 0; i < bit_count; i++) {
-        uint8_t bit = (buf[i >> 3] >> (i & 7u)) & 1u;
-        if (bit == 0) {
-            s_nrzi_state = !s_nrzi_state;
-        }
-        afsk_set_freq(s_nrzi_state);
-        esp_rom_delay_us(AFSK_BIT_US);
+    size_t i = s_bit_idx;
+
+    if (i >= s_bit_total) {
+        // 全ビット送出完了: 無音にして AFSK タスクを起床
+        afsk_tx_off();
+        xTaskNotifyGive(s_tx_task);
+        return;
     }
+
+    // NRZI: 0 → 周波数反転, 1 → 維持
+    uint8_t bit = (s_hdlc_buf[i >> 3] >> (i & 7u)) & 1u;
+    if (bit == 0) s_nrzi_state = !s_nrzi_state;
+    afsk_set_freq(s_nrzi_state);
+    s_bit_idx = i + 1;
+
+    // 次のビットを AFSK_BIT_US 後に予約
+    esp_timer_start_once(s_bit_timer, AFSK_BIT_US);
 }
 
 // ---------------------------------------------------------------------------
@@ -93,17 +104,26 @@ static void afsk_send_bits(const uint8_t *buf, size_t bit_count)
 // ---------------------------------------------------------------------------
 
 /**
- * @brief raw_tx_item_t（FCS付き AX.25 生フレーム）を Bell 202 AFSK で送出する
+ * @brief raw_tx_item_t を Bell 202 AFSK で送出する（CPU をブロックしない）
  *
  * 処理フロー:
- *   1. ax25_hdlc_frame()  → HDLC フレーミング（プリアンブル + ビットスタッフ）
- *   2. afsk_send_bits()   → NRZI + PWM 周波数切替で送出
+ *   1. ax25_hdlc_frame()       → HDLC フレーミング（プリアンブル + ビットスタッフ）
+ *   2. esp_timer start_once()  → AFSK_BIT_US ごとにコールバックで 1 ビット送出
+ *   3. ulTaskNotifyTake()      → 全ビット完了まで AFSK タスクをスリープ
  *
- * @param item raw_tx_buf / afsk_tx_buf から取得した raw_tx_item_t ポインタ
+ * esp_timer コールバックが bit 送出を担うため、送信中に CPU は他タスクを実行できる。
+ *
+ * @param item afsk_tx_buf から受け取った raw_tx_item_t ポインタ
  */
 static void afsk_transmit(const raw_tx_item_t *item)
 {
     size_t raw_len = item->meta.payload_len;
+
+    // 不正な長さは弾く（s_hdlc_buf サイズ超え → hdlc_frame 内でも検出されるが二重チェック）
+    if (raw_len == 0 || raw_len > RAW_PACKET_MAX_LEN_WITH_FCS) {
+        ESP_LOGW(TAG, "invalid raw_len=%zu, skipped", raw_len);
+        return;
+    }
 
     size_t hdlc_bits  = 0;
     size_t hdlc_bytes = ax25_hdlc_frame(
@@ -114,19 +134,23 @@ static void afsk_transmit(const raw_tx_item_t *item)
         return;
     }
 
-    ESP_LOGI(TAG, "TX port%d %s>%s  FCS=0x%04X  raw=%zu  HDLC=%zu bytes / %zu bits",
+    ESP_LOGI(TAG, "TX port%d %s>%s FCS=0x%04X  raw=%zu  HDLC=%zu bytes / %zu bits",
              item->meta.port_id,
              item->meta.src_call, item->meta.dest_call,
              item->meta.fcs, raw_len, hdlc_bytes, hdlc_bits);
 
+    // 送信ステート初期化
+    s_bit_idx    = 0;
+    s_bit_total  = hdlc_bits;
     s_nrzi_state = true;
-    afsk_set_freq(true);
+    s_tx_task    = xTaskGetCurrentTaskHandle();
+
+    // PWM 有効化 → 最初のビットをほぼ即時に送出（遅延 0 で予約）
     afsk_tx_on();
-    vTaskDelay(pdMS_TO_TICKS(10));  // PWM安定待ち
+    esp_timer_start_once(s_bit_timer, 0);
 
-    afsk_send_bits(s_hdlc_buf, hdlc_bits);
-
-    afsk_tx_off();
+    // 全ビット送出完了（コールバックから通知）まで待機
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +161,7 @@ static void afsk_transmit(const raw_tx_item_t *item)
  * @brief AFSK 送信タスク
  *
  * afsk_tx_buf を監視し、パケットが到着したら AFSK で送出する。
- * rawpacket_task が UISEND / KISS 由来パケットを afsk_tx_buf に書き込む。
+ * 送信中は esp_timer コールバックに制御を委譲し、このタスク自体はスリープする。
  *
  * @param pvParameters 未使用
  */
@@ -147,10 +171,8 @@ static void afsk_pwm_test_task(void *pvParameters)
         size_t item_size = 0;
         raw_tx_item_t *item = (raw_tx_item_t *)xRingbufferReceive(
             afsk_tx_buf, &item_size, portMAX_DELAY);
-
         if (item == NULL) continue;
 
-        // HDLC フレーミングと送信（item->data を s_hdlc_buf にコピー後、アイテムを解放）
         afsk_transmit(item);
         vRingbufferReturnItem(afsk_tx_buf, (void *)item);
     }
@@ -162,10 +184,9 @@ static void afsk_pwm_test_task(void *pvParameters)
 
 void afsk_pwm_test_init(void)
 {
-    // HDLC ルックアップテーブル初期化（ax25_hdlc_frame が内部で使用）
     init_hdlc_tables();
 
-    // LEDC タイマー初期化（8bit分解能、mark周波数で開始）
+    // LEDC タイマー初期化（8bit分解能、mark 周波数で開始）
     ledc_timer_config_t timer_cfg = {
         .speed_mode      = LEDC_LOW_SPEED_MODE,
         .timer_num       = AFSK_LEDC_TIMER,
@@ -186,10 +207,19 @@ void afsk_pwm_test_init(void)
     };
     ESP_ERROR_CHECK(ledc_channel_config(&ch_cfg));
 
-    ESP_LOGI(TAG, "AFSK PWM init: GPIO%d  Mark=%dHz Space=%dHz %dbaud",
+    // ビット送出用ワンショットタイマー作成
+    // ESP_TIMER_TASK: コールバックは専用タスクから呼ばれる（ISR ではない）
+    esp_timer_create_args_t targs = {
+        .callback        = afsk_bit_timer_cb,
+        .arg             = NULL,
+        .name            = "afsk_bit",
+        .dispatch_method = ESP_TIMER_TASK,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&targs, &s_bit_timer));
+
+    ESP_LOGI(TAG, "AFSK PWM init: GPIO%d  Mark=%dHz Space=%dHz %dbaud  (timer-driven)",
              AFSK_PWM_GPIO, AFSK_MARK_HZ, AFSK_SPACE_HZ, AFSK_BAUD);
 
-    // Core 1 に固定して bit-bang タイミングの影響を最小化
     xTaskCreatePinnedToCore(afsk_pwm_test_task, "afsk_test",
                             4096, NULL, 5, NULL, 1);
 }
