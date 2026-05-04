@@ -117,6 +117,11 @@ static void afsk_bit_timer_cb(void *arg)
  */
 static void afsk_transmit(const raw_tx_item_t *item)
 {
+    if (s_bit_timer == NULL) {
+        ESP_LOGW(TAG, "timer not initialized, TX skipped");
+        return;
+    }
+
     size_t raw_len = item->meta.payload_len;
 
     // 不正な長さは弾く（s_hdlc_buf サイズ超え → hdlc_frame 内でも検出されるが二重チェック）
@@ -167,6 +172,13 @@ static void afsk_transmit(const raw_tx_item_t *item)
  */
 static void afsk_pwm_test_task(void *pvParameters)
 {
+    // afsk_tx_buf が NULL（作成失敗）なら即終了してタスクリソースを解放
+    if (afsk_tx_buf == NULL) {
+        ESP_LOGE(TAG, "afsk_tx_buf is NULL, task exiting");
+        vTaskDelete(NULL);
+        return;
+    }
+
     for (;;) {
         size_t item_size = 0;
         raw_tx_item_t *item = (raw_tx_item_t *)xRingbufferReceive(
@@ -194,7 +206,11 @@ void afsk_pwm_test_init(void)
         .freq_hz         = AFSK_MARK_HZ,
         .clk_cfg         = LEDC_AUTO_CLK,
     };
-    ESP_ERROR_CHECK(ledc_timer_config(&timer_cfg));
+    esp_err_t err = ledc_timer_config(&timer_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "ledc_timer_config failed: %s", esp_err_to_name(err));
+        return;
+    }
 
     // LEDC チャンネル初期化（duty=0 で無音状態から開始）
     ledc_channel_config_t ch_cfg = {
@@ -205,17 +221,24 @@ void afsk_pwm_test_init(void)
         .duty       = 0,
         .hpoint     = 0,
     };
-    ESP_ERROR_CHECK(ledc_channel_config(&ch_cfg));
+    err = ledc_channel_config(&ch_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "ledc_channel_config failed: %s", esp_err_to_name(err));
+        return;
+    }
 
     // ビット送出用ワンショットタイマー作成
     // ESP_TIMER_TASK: コールバックは専用タスクから呼ばれる（ISR ではない）
-    esp_timer_create_args_t targs = {
-        .callback        = afsk_bit_timer_cb,
-        .arg             = NULL,
-        .name            = "afsk_bit",
-        .dispatch_method = ESP_TIMER_TASK,
-    };
-    ESP_ERROR_CHECK(esp_timer_create(&targs, &s_bit_timer));
+    esp_timer_create_args_t targs = {0};
+    targs.callback        = afsk_bit_timer_cb;
+    targs.name            = "afsk_bit";
+    targs.dispatch_method = ESP_TIMER_TASK;
+
+    err = esp_timer_create(&targs, &s_bit_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_timer_create failed: %s", esp_err_to_name(err));
+        return;
+    }
 
     ESP_LOGI(TAG, "AFSK PWM init: GPIO%d  Mark=%dHz Space=%dHz %dbaud  (timer-driven)",
              AFSK_PWM_GPIO, AFSK_MARK_HZ, AFSK_SPACE_HZ, AFSK_BAUD);
