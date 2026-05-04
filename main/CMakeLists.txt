@@ -14,6 +14,7 @@ idf_component_register(SRCS
     "ax25/ax25_fcs.c"
     "ax25/ax25_hdlc.c"
     "ax25/ax25_utils.c"
+    "ax25/bitstaff.c"
     "ax25/callsign.c"
     "ax25/kiss_parser.c"
 
@@ -23,6 +24,8 @@ idf_component_register(SRCS
 
     "packet/tx_frame.c"
 
+    "modem/afsk_pwm_test.c"
+
 INCLUDE_DIRS "." "ax25" "port" "packet" "hw" "modem"
-PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console
+PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console esp_driver_ledc
 )

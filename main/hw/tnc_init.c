@@ -21,6 +21,7 @@
 #include "nvs_if.h"
 #include "packet_monitor.h"
 #include "rawpacket.h"
+#include "afsk_pwm_test.h"
 
 void tnc_init(void)
 {
@@ -56,6 +57,11 @@ void tnc_init(void)
     rawpacket_init(); // L3生パケット生成タスク起動
 
     packet_monitor_init(); // パケットモニタタスク起動
+
+    // --- テスト: Bell 202 AFSK 変調音をスピーカで確認 ---
+    // GPIO17 → 10μF → 100Ω → スピーカ → GND
+    // I2S モデム完成後に削除すること
+    afsk_pwm_test_init();
 
 }
 
