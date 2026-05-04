@@ -1,7 +1,7 @@
 #include "rawpacket.h"
 #include "ax25.h"
 #include "callsign.h"
-#include "tnc_buffer.h"
+#include "tnc_buffer.h"   // tx_ringbuf / rx_ringbuf / afsk_tx_buf
 #include "esp_log.h"
 
 #include "freertos/FreeRTOS.h"
@@ -361,16 +361,25 @@ static void rawpacket_task(void *pvParameters)
             // テスト用: パケット内容をテキストモニタとして同一ポートのUSBへ返送
             rawpacket_monitor_to_pc(port_id, raw_buf, raw_len);
 
-            // raw_tx_buf へ出力（将来: FX.25/物理層への引き渡し用）
-            if (raw_tx_buf != NULL) {
+            // raw_tx_buf / afsk_tx_buf へ出力（将来: FX.25/物理層への引き渡し用）
+            {
                 raw_tx_item_t out;
                 out.meta             = out_meta;
                 out.meta.payload_len = (uint16_t)raw_len;
                 memcpy(out.data, raw_buf, raw_len);
-                BaseType_t res = xRingbufferSend(
-                    raw_tx_buf, &out, RAW_TX_ITEM_SIZE(raw_len), pdMS_TO_TICKS(10));
-                if (res != pdTRUE) {
-                    ESP_LOGW(TAG, "Port%d: raw_tx_buf full, packet dropped", port_id);
+                size_t item_sz = RAW_TX_ITEM_SIZE(raw_len);
+
+                if (raw_tx_buf != NULL) {
+                    BaseType_t res = xRingbufferSend(
+                        raw_tx_buf, &out, item_sz, pdMS_TO_TICKS(10));
+                    if (res != pdTRUE)
+                        ESP_LOGW(TAG, "Port%d: raw_tx_buf full, packet dropped", port_id);
+                }
+                if (afsk_tx_buf != NULL) {
+                    BaseType_t res = xRingbufferSend(
+                        afsk_tx_buf, &out, item_sz, pdMS_TO_TICKS(10));
+                    if (res != pdTRUE)
+                        ESP_LOGW(TAG, "Port%d: afsk_tx_buf full, packet dropped", port_id);
                 }
             }
             break;
@@ -378,7 +387,7 @@ static void rawpacket_task(void *pvParameters)
 
         case META_TYPE_DATA_KISS: {
             // KISSペイロード = PC から受け取った AX.25 フレーム（FCSなし）
-            // アドレスフィールドを解析してメタに展開し、raw_tx_buf へ転送する
+            // アドレスフィールドを解析してメタに展開し、各 TX バッファへ転送する
             size_t ax25_len = (size_t)meta->payload_len;
             if (ax25_len == 0 || ax25_len > RAW_PACKET_MAX_LEN) {
                 ESP_LOGW(TAG, "Port%d: KISS invalid payload len %u",
@@ -397,7 +406,7 @@ static void rawpacket_task(void *pvParameters)
                      port_id, updated_meta.src_call, updated_meta.dest_call,
                      updated_meta.digi_count);
 
-            if (raw_tx_buf != NULL) {
+            {
                 raw_tx_item_t out;
                 memcpy(out.data, payload, ax25_len);
 
@@ -411,10 +420,19 @@ static void rawpacket_task(void *pvParameters)
 
                 out.meta             = updated_meta;
                 out.meta.payload_len = (uint16_t)ax25_len;
-                BaseType_t res = xRingbufferSend(
-                    raw_tx_buf, &out, RAW_TX_ITEM_SIZE(ax25_len), pdMS_TO_TICKS(10));
-                if (res != pdTRUE) {
-                    ESP_LOGW(TAG, "Port%d: raw_tx_buf full, KISS packet dropped", port_id);
+                size_t item_sz = RAW_TX_ITEM_SIZE(ax25_len);
+
+                if (raw_tx_buf != NULL) {
+                    BaseType_t res = xRingbufferSend(
+                        raw_tx_buf, &out, item_sz, pdMS_TO_TICKS(10));
+                    if (res != pdTRUE)
+                        ESP_LOGW(TAG, "Port%d: raw_tx_buf full, KISS packet dropped", port_id);
+                }
+                if (afsk_tx_buf != NULL) {
+                    BaseType_t res = xRingbufferSend(
+                        afsk_tx_buf, &out, item_sz, pdMS_TO_TICKS(10));
+                    if (res != pdTRUE)
+                        ESP_LOGW(TAG, "Port%d: afsk_tx_buf full, KISS packet dropped", port_id);
                 }
             }
             break;
