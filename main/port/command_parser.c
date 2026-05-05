@@ -2,7 +2,6 @@
 #include "ax25.h"
 #include "esp_console.h"
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "nvs_if.h"
 #include "tx_frame.h"
 #include "indicator.h"
@@ -11,10 +10,7 @@
 #include <string.h>
 #include <ctype.h>
 
-// ヒストリNVS保存の間引き制御（ポートごと）
-#define HIST_SAVE_INTERVAL_US  (3LL * 60 * 1000000LL) // 3分
-static int     hist_dirty[2]         = {0, 0};
-static int64_t hist_last_save_us[2]  = {0, 0};
+static int hist_dirty[2] = {0, 0};
 
 // エントリアクセスマクロ
 // pool[p+0]: PREV = go_older方向, pool[p+1]: NEXT = go_newer方向
@@ -33,8 +29,7 @@ void history_commit(tnc_port_info_t *port)
     if (!hist_dirty[port->id]) return;
     nvs_save_history(port->id, port->hist_pool,
                      port->hist_head, port->hist_count);
-    hist_dirty[port->id]        = 0;
-    hist_last_save_us[port->id] = esp_timer_get_time();
+    hist_dirty[port->id] = 0;
 }
 
 
@@ -476,9 +471,9 @@ static void hist_push(tnc_port_info_t *port, const char *cmd)
 
 mark_dirty:
     hist_dirty[port->id] = 1;
-    int64_t now = esp_timer_get_time();
-    if ((now - hist_last_save_us[port->id]) >= HIST_SAVE_INTERVAL_US)
-        history_commit(port);
+    // NVS 自動書き込みは削除 — フラッシュ消去を伴う NVS write がコマンドタスク上で
+    // 数百ms 実行されると IDLE タスクが動けず Task Watchdog をトリガーする。
+    // 保存は hs コマンド（手動）でのみ行う。
 }
 
 // 現在の入力行を消去して str を表示
