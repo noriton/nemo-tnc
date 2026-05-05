@@ -82,7 +82,7 @@ typedef struct tnc_port_info {
     char line_buf[256];        // コマンド,チャット用の一行バッファ
     int line_pos;
     // --- コマンドヒストリ ---
-#define HIST_POOL_SIZE  256
+#define HIST_POOL_SIZE  512   // line_buf(255) + header(3) = 258 bytes/entry
 #define HIST_NIL        0xFF
     uint8_t  hist_pool[HIST_POOL_SIZE]; // 可変長エントリプール（双方向循環リスト）
     uint8_t  hist_head;     // 最新エントリのオフセット (HIST_NIL=空)

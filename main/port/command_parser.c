@@ -393,12 +393,23 @@ static void hist_compact(tnc_port_info_t *port)
 }
 
 // needed バイトの書き込み領域を確保してオフセットを返す
+// 収まらない場合は HIST_NIL を返す（呼び出し元は必ず確認すること）
 static uint8_t hist_pool_alloc(tnc_port_info_t *port, int needed)
 {
+    // 1エントリがプール全体より大きい場合は収納不可
+    if (needed > HIST_POOL_SIZE) return HIST_NIL;
+
     if ((int)port->hist_wp + needed > HIST_POOL_SIZE)
         hist_compact(port);
 
+    // 古いエントリを evict して空きを作る
     while (port->hist_count > 0) {
+        // compact 後もまだ入らない場合は強制 evict + compact を繰り返す
+        if ((int)port->hist_wp + needed > HIST_POOL_SIZE) {
+            hist_evict_oldest(port);
+            hist_compact(port);
+            continue;
+        }
         uint8_t oldest  = H_NEXT(port->hist_pool, port->hist_head);
         int o_start = (int)oldest;
         int o_end   = o_start + hist_entry_len(port->hist_pool, oldest);
@@ -409,6 +420,10 @@ static uint8_t hist_pool_alloc(tnc_port_info_t *port, int needed)
         else
             break;
     }
+
+    // 最終安全チェック（uint8_t オーバーフロー防止）
+    if ((int)port->hist_wp + needed > HIST_POOL_SIZE) return HIST_NIL;
+
     uint8_t off = port->hist_wp;
     port->hist_wp += (uint8_t)needed;
     return off;
@@ -420,6 +435,7 @@ void hist_push_raw(tnc_port_info_t *port, const char *cmd)
     if (cmd[0] == '\0') return;
     int needed = 2 + (int)strlen(cmd) + 1;
     uint8_t off = hist_pool_alloc(port, needed);
+    if (off == HIST_NIL) return;  // 収まらない場合はスキップ（WDT回避）
     uint8_t *pool = port->hist_pool;
     strcpy(H_CMD(pool, off), cmd);
     if (port->hist_count == 0) {
