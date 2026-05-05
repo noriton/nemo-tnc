@@ -268,7 +268,8 @@ static void rawpacket_monitor_to_pc(int port_id, const uint8_t *raw, size_t raw_
         strncpy(dest_str, dest, sizeof(dest_str) - 1);
 
     // モニタ行フォーマット (TNC2スタイル + FCS表示)
-    char line[320];
+    // Info フィールド最大 512 bytes + 固定部 ~60 chars → 640 bytes
+    char line[640];
     int n = snprintf(line, sizeof(line),
                      "[MON] port%d: %s>%s%s [UI pid=%02X]: %.*s [FCS:0x%04X %s]\r\n",
                      port_id, src_str, dest_str, digi_str, pid,
@@ -455,7 +456,9 @@ static void rawpacket_task(void *pvParameters)
 void rawpacket_init(void)
 {
     // 生パケット出力バッファ（NOSPLIT: 1アイテム = 1完全パケット）
-    raw_tx_buf = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
+    // raw_tx_item_t は ~682 bytes (meta:168 + data:514)
+    // NOSPLIT アイテム1個 + ヘッダ overhead ~12 bytes → 1スロット≒700 bytes
+    raw_tx_buf = xRingbufferCreate(8192, RINGBUF_TYPE_NOSPLIT);
     if (raw_tx_buf == NULL) {
         ESP_LOGE(TAG, "Failed to create raw_tx_buf");
         return;

@@ -19,16 +19,19 @@ void tnc_buffer_init(void)
 
     // NOSPLIT: 1アイテム = 1パケット（メタヘッダ + ペイロード境界を保証）
     // TNC内部 → tnc_pc_port への統合キュー（MON_TEXT / TX_MON / RX_FRAME 等）
-    rx_ringbuf[0] = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
-    rx_ringbuf[1] = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
+    // MON_TEXT: meta(168) + line(640) = 808 bytes/item → 8192 で約9スロット
+    rx_ringbuf[0] = xRingbufferCreate(8192, RINGBUF_TYPE_NOSPLIT);
+    rx_ringbuf[1] = xRingbufferCreate(8192, RINGBUF_TYPE_NOSPLIT);
 
     // NOSPLIT: 1アイテム = 1パケット（メタヘッダ + ペイロード境界を保証）
     // tnc_pc_port → rawpacket への送信キュー
-    tx_ringbuf[0] = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
-    tx_ringbuf[1] = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
+    // meta(168) + payload(512) = 680 bytes/item → 8192 で約11スロット
+    tx_ringbuf[0] = xRingbufferCreate(8192, RINGBUF_TYPE_NOSPLIT);
+    tx_ringbuf[1] = xRingbufferCreate(8192, RINGBUF_TYPE_NOSPLIT);
 
-    // AFSKモデム送信バッファ（raw_tx_item_t 2スロット分）
-    afsk_tx_buf = xRingbufferCreate(2048, RINGBUF_TYPE_NOSPLIT);
+    // AFSKモデム送信バッファ
+    // raw_tx_item_t: meta(168) + data(514) = 682 bytes/item → 4096 で約5スロット
+    afsk_tx_buf = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
 
     if (usb_from_pc[0] == NULL || usb_from_pc[1] == NULL
         || usb_to_pc[0] == NULL || usb_to_pc[1] == NULL

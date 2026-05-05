@@ -8,8 +8,9 @@
 #include "frame_metadata.h"
 
 // AX.25 L3生パケットの最大サイズ（Flags/FCS/ビットスタッフィングなし）
-// 宛先7 + 送信元7 + Digipeater最大8局×7=56 + Control1 + PID1 + Info256 = 328
-#define RAW_PACKET_MAX_LEN          328
+// AX.25標準: 宛先7 + 送信元7 + Digi×8×7=56 + Ctrl1 + PID1 + Info256 = 328
+// FX.25 RS パリティ等を含む将来拡張を見越して 512 bytes に設定
+#define RAW_PACKET_MAX_LEN          512
 // FCS 2バイトを末尾に付加した後の最大サイズ
 #define RAW_PACKET_MAX_LEN_WITH_FCS (RAW_PACKET_MAX_LEN + 2)
 #define AX25_ADDR_LEN       7      // AX.25アドレスフィールド長（コールサイン6 + SSIDバイト1）
