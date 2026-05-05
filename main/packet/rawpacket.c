@@ -466,7 +466,7 @@ void rawpacket_init(void)
         char task_name[16];
         snprintf(task_name, sizeof(task_name), "rawpkt_%d", i);
         // スタック: raw_buf[328] + raw_tx_item_t(~484B) + monitor line(280B) のため 4096 確保
-        xTaskCreate(rawpacket_task, task_name, 4096, (void *)(intptr_t)i, 5, NULL);
+        xTaskCreate(rawpacket_task, task_name, 8192, (void *)(intptr_t)i, 5, NULL);
     }
 
     ESP_LOGI(TAG, "rawpacket_init done");

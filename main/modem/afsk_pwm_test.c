@@ -95,8 +95,13 @@ static void afsk_bit_timer_cb(void *arg)
     afsk_set_freq(s_nrzi_state);
     s_bit_idx = i + 1;
 
-    // 次のビットを AFSK_BIT_US 後に予約
-    esp_timer_start_once(s_bit_timer, AFSK_BIT_US);
+    // 次のビットを AFSK_BIT_US 後に予約（失敗時はTX強制終了）
+    esp_err_t ret = esp_timer_start_once(s_bit_timer, AFSK_BIT_US);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_timer_start_once: %s", esp_err_to_name(ret));
+        afsk_tx_off();
+        if (s_tx_task) xTaskNotifyGive(s_tx_task);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -150,9 +155,14 @@ static void afsk_transmit(const raw_tx_item_t *item)
     s_nrzi_state = true;
     s_tx_task    = xTaskGetCurrentTaskHandle();
 
-    // PWM 有効化 → 最初のビットをほぼ即時に送出（遅延 0 で予約）
+    // PWM 有効化 → 最初のビットをほぼ即時に送出（1µs 後に予約）
     afsk_tx_on();
-    esp_timer_start_once(s_bit_timer, 0);
+    esp_err_t start_ret = esp_timer_start_once(s_bit_timer, 1);
+    if (start_ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_timer_start_once (initial): %s", esp_err_to_name(start_ret));
+        afsk_tx_off();
+        return;
+    }
 
     // 全ビット送出完了（コールバックから通知）まで待機
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
