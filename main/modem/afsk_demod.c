@@ -75,6 +75,13 @@ static const char *TAG = "AFSK_RX";
 /* DC 追跡 LP: α ≈ 0.005 (τ ≈ 200 サンプル ≈ 20 ms) */
 #define DC_ALPHA   0.005f
 
+/* スケルチ閾値: envM + envS の合計がこれ以下なら無信号とみなす
+ * ループバック時の典型値は数十〜数百。ノイズのみ時は 1〜5 程度 */
+#define SQUELCH_THRESHOLD  10.0f
+
+/* トーン判定ヒステリシス: envM - envS の差がこの範囲内では前のトーンを維持 */
+#define TONE_HYST  3.0f
+
 /* --------------------------------------------------------------------------
  * HDLC 定数
  * -------------------------------------------------------------------------- */
@@ -101,9 +108,11 @@ static float s_env_s;
 static float s_dc;
 
 /* ビットクロック */
-static int   s_phase;         /* 0 .. DEMOD_SPB-1 */
-static bool  s_prev_tone;     /* 前サンプルのトーン (true = Mark) */
-static bool  s_nrzi_ref;      /* NRZI 参照: 最後のビット決定時のトーン */
+static int   s_phase;          /* 0 .. DEMOD_SPB-1 */
+static bool  s_tone;           /* ヒステリシス付きトーン (true = Mark) */
+static bool  s_tone_prev;      /* 前サンプルのトーン (遷移検出用) */
+static int   s_sync_lockout;   /* 再同期ロックアウトカウンタ */
+static bool  s_nrzi_ref;       /* NRZI 参照: 最後のビット決定時のトーン */
 
 /* HDLC デコーダ */
 static hdlc_state_t s_hdlc_state;
@@ -271,39 +280,69 @@ static void afsk_sample_cb(void *arg)
     s_env_m = ENV_ALPHA * abs_m + (1.0f - ENV_ALPHA) * s_env_m;
     s_env_s = ENV_ALPHA * abs_s + (1.0f - ENV_ALPHA) * s_env_s;
 
-    /* 6. トーン判定: Mark(true=1200Hz) / Space(false=2200Hz) */
-    bool tone = (s_env_m > s_env_s);
-
-    /* 7. 遷移検出 → ビットクロック再同期
-     *    遷移はビット境界で起きるので、phase を 0 にリセットすると
-     *    4 サンプル後 (DEMOD_SPB/2) が次のビット中点になる */
-    if (tone != s_prev_tone) {
-        s_phase = 0;
+    /* 6. スケルチ: 信号合計が閾値未満 → HDLC リセットして早期リターン */
+    if (s_env_m + s_env_s < SQUELCH_THRESHOLD) {
+        if (s_hdlc_state != HDLC_HUNT) {
+            s_hdlc_state    = HDLC_HUNT;
+            s_frame_bit_pos = 0;
+            s_ones          = 0;
+        }
+        if (++s_phase >= DEMOD_SPB) s_phase = 0;
+        if (++s_sample_cnt >= LOG_INTERVAL_SAMP) {
+            s_sample_cnt = 0;
+            ESP_LOGI(TAG, "STAT DC=%.0f envM=%.1f envS=%.1f [NO SIGNAL] "
+                     "flags=%lu ok=%lu ng=%lu",
+                     s_dc, s_env_m, s_env_s,
+                     (unsigned long)s_stat_flags,
+                     (unsigned long)s_stat_fcs_ok,
+                     (unsigned long)s_stat_fcs_ng);
+        }
+        return;
     }
-    s_prev_tone = tone;
 
-    /* 8. ビット決定 (位相中点 = phase == 4) */
+    /* 7. トーン判定 (ヒステリシス付き)
+     *    差が TONE_HYST 未満の近傍では前のトーンを維持 → 境界での高速振動を防ぐ */
+    float diff = s_env_m - s_env_s;
+    if (s_tone) {                          /* 現在 Mark */
+        if (diff < -TONE_HYST) s_tone = false;
+    } else {                               /* 現在 Space */
+        if (diff >  TONE_HYST) s_tone = true;
+    }
+
+    /* 8. 遷移検出 → ビットクロック再同期
+     *    ロックアウト付き: 1 ビット期間の半分 (4 サンプル) は再同期しない
+     *    これにより境界付近の複数遷移で位相が暴れるのを防ぐ */
+    bool transition = (s_tone != s_tone_prev);
+    s_tone_prev = s_tone;
+    if (s_sync_lockout > 0) {
+        s_sync_lockout--;
+    } else if (transition) {
+        s_phase        = 0;
+        s_sync_lockout = DEMOD_SPB / 2;   /* 4 サンプル間ロック */
+    }
+
+    /* 9. ビット決定 (位相中点 = phase == 4) */
     if (s_phase == DEMOD_SPB / 2) {
         /* NRZI デコード: 前回と同じトーン → 1, 異なる → 0 */
-        uint8_t bit = (tone == s_nrzi_ref) ? 1u : 0u;
-        s_nrzi_ref  = tone;
+        uint8_t bit = (s_tone == s_nrzi_ref) ? 1u : 0u;
+        s_nrzi_ref  = s_tone;
         hdlc_process_bit(bit);
     }
 
-    /* 9. 位相カウンタ更新 */
+    /* 10. 位相カウンタ更新 */
     if (++s_phase >= DEMOD_SPB) {
         s_phase = 0;
     }
 
-    /* 10. 定期診断ログ (5 秒ごと) */
+    /* 11. 定期診断ログ (5 秒ごと) */
     if (++s_sample_cnt >= LOG_INTERVAL_SAMP) {
         s_sample_cnt = 0;
         static const char * const state_str[] = { "HUNT", "SYNC", "FRAME" };
         ESP_LOGI(TAG,
-                 "STAT DC=%.0f envM=%.1f envS=%.1f tone=%s hdlc=%s "
+                 "STAT DC=%.0f envM=%.1f envS=%.1f diff=%.1f tone=%s hdlc=%s "
                  "flags=%lu ok=%lu ng=%lu",
-                 s_dc, s_env_m, s_env_s,
-                 tone ? "MARK" : "SPACE",
+                 s_dc, s_env_m, s_env_s, diff,
+                 s_tone ? "MARK" : "SPACE",
                  state_str[s_hdlc_state],
                  (unsigned long)s_stat_flags,
                  (unsigned long)s_stat_fcs_ok,
@@ -318,10 +357,12 @@ static void afsk_sample_cb(void *arg)
 void afsk_demod_init(void)
 {
     /* 初期値設定 */
-    s_dc          = 2048.0f;
-    s_prev_tone   = true;
-    s_nrzi_ref    = true;
-    s_hdlc_state  = HDLC_HUNT;
+    s_dc           = 2048.0f;
+    s_tone         = true;
+    s_tone_prev    = true;
+    s_nrzi_ref     = true;
+    s_sync_lockout = 0;
+    s_hdlc_state   = HDLC_HUNT;
     memset(s_frame_buf, 0, sizeof(s_frame_buf));
 
     /* ADC 初期化 (ESP-IDF v5 oneshot API) */
