@@ -25,7 +25,8 @@ idf_component_register(SRCS
     "packet/tx_frame.c"
 
     "modem/afsk_pwm_test.c"
+    "modem/afsk_demod.c"
 
 INCLUDE_DIRS "." "ax25" "port" "packet" "hw" "modem"
-PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console esp_driver_ledc
+PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console esp_driver_ledc esp_adc
 )

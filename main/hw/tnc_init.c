@@ -22,6 +22,7 @@
 #include "packet_monitor.h"
 #include "rawpacket.h"
 #include "afsk_pwm_test.h"
+#include "afsk_demod.h"
 
 void tnc_init(void)
 {
@@ -62,6 +63,8 @@ void tnc_init(void)
     // GPIO17 → 10μF → 100Ω → スピーカ → GND
     // I2S モデム完成後に削除すること
     afsk_pwm_test_init();
+
+    afsk_demod_init();
 
 }
 
