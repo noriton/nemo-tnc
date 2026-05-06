@@ -115,6 +115,15 @@ static size_t       s_frame_bit_pos;
 static adc_oneshot_unit_handle_t s_adc_handle   = NULL;
 static esp_timer_handle_t        s_sample_timer = NULL;
 
+/* 診断用統計カウンタ */
+static uint32_t s_stat_flags  = 0;  /* フラグ検出数 (SYNC 遷移) */
+static uint32_t s_stat_fcs_ok = 0;  /* FCS OK フレーム数 */
+static uint32_t s_stat_fcs_ng = 0;  /* FCS NG フレーム数 */
+static uint32_t s_sample_cnt  = 0;  /* 定期ログ用サンプルカウンタ */
+
+/* 定期ログ間隔: 5 秒 (= DEMOD_SAMPLE_RATE × 5) */
+#define LOG_INTERVAL_SAMP  (DEMOD_SAMPLE_RATE * 5)
+
 /* ==========================================================================
  * HDLC フレーム完了処理
  * ========================================================================== */
@@ -122,11 +131,15 @@ static esp_timer_handle_t        s_sample_timer = NULL;
 static void hdlc_frame_done(size_t byte_len)
 {
     if (!ax25_fcs_verify(s_frame_buf, byte_len)) {
-        ESP_LOGD(TAG, "FCS NG %zu bytes", byte_len);
+        s_stat_fcs_ng++;
+        ESP_LOGI(TAG, "FCS NG %zu bytes (ok=%lu ng=%lu)",
+                 byte_len, (unsigned long)s_stat_fcs_ok, (unsigned long)s_stat_fcs_ng);
         return;
     }
 
-    ESP_LOGI(TAG, "RX OK %zu bytes", byte_len);
+    s_stat_fcs_ok++;
+    ESP_LOGI(TAG, "RX OK %zu bytes (ok=%lu ng=%lu)",
+             byte_len, (unsigned long)s_stat_fcs_ok, (unsigned long)s_stat_fcs_ng);
 
     tnc_meta_header_t meta;
     memset(&meta, 0, sizeof(meta));
@@ -198,6 +211,12 @@ static void hdlc_process_bit(uint8_t bit)
         }
         if (s_ones == 6) {
             /* フラグ (0x7E) 検出 */
+            if (s_hdlc_state == HDLC_HUNT) {
+                /* HUNT → SYNC: プリアンブルを初検出 */
+                ESP_LOGI(TAG, "FLAG sync (DC=%.0f envM=%.1f envS=%.1f)",
+                         s_dc, s_env_m, s_env_s);
+            }
+            s_stat_flags++;
             if (s_hdlc_state == HDLC_FRAME) {
                 size_t valid_bits = (s_frame_bit_pos >= 6) ?
                                      s_frame_bit_pos - 6 : 0;
@@ -274,6 +293,21 @@ static void afsk_sample_cb(void *arg)
     /* 9. 位相カウンタ更新 */
     if (++s_phase >= DEMOD_SPB) {
         s_phase = 0;
+    }
+
+    /* 10. 定期診断ログ (5 秒ごと) */
+    if (++s_sample_cnt >= LOG_INTERVAL_SAMP) {
+        s_sample_cnt = 0;
+        static const char * const state_str[] = { "HUNT", "SYNC", "FRAME" };
+        ESP_LOGI(TAG,
+                 "STAT DC=%.0f envM=%.1f envS=%.1f tone=%s hdlc=%s "
+                 "flags=%lu ok=%lu ng=%lu",
+                 s_dc, s_env_m, s_env_s,
+                 tone ? "MARK" : "SPACE",
+                 state_str[s_hdlc_state],
+                 (unsigned long)s_stat_flags,
+                 (unsigned long)s_stat_fcs_ok,
+                 (unsigned long)s_stat_fcs_ng);
     }
 }
 
