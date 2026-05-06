@@ -327,10 +327,20 @@ static void afsk_sample_cb(void *arg)
         if (diff >  TONE_HYST) s_tone = true;
     }
 
-    /* 8. 遷移検出 → ビットクロック再同期
-     *    BPF 群遅延補正: 実際の遷移は検出より約 2.5 サンプル前に起きている。
-     *    phase=2 にすることで判定点 (phase==4) が遷移から 4 サンプル後 = ビット中点に合う。
-     *    ロックアウト (4 サンプル) で境界付近の多重リセットを防ぐ */
+    /* 8. ビット決定 (位相中点 = phase == 4)
+     *    遷移検出より先に判定する。これにより判定点 (phase==4) で遷移が来た場合でも
+     *    現在ビットの判定を確実に行い、位相リセットは次ビット以降に効かせる */
+    if (s_phase == DEMOD_SPB / 2) {
+        /* NRZI デコード: 前回と同じトーン → 1, 異なる → 0 */
+        uint8_t bit = (s_tone == s_nrzi_ref) ? 1u : 0u;
+        s_nrzi_ref  = s_tone;
+        hdlc_process_bit(bit);
+    }
+
+    /* 9. 遷移検出 → ビットクロック再同期 (判定の後に実行)
+     *    phase==4 のサンプルで遷移しても判定済みなので位相リセットは次ビットへ向かう。
+     *    BPF 群遅延補正: phase=2 にすることで次の判定点 (phase==4) が
+     *    遷移から 4 サンプル後 = ビット中点に合う */
     bool transition = (s_tone != s_tone_prev);
     s_tone_prev = s_tone;
     if (s_sync_lockout > 0) {
@@ -338,14 +348,6 @@ static void afsk_sample_cb(void *arg)
     } else if (transition) {
         s_phase        = 2;                /* 群遅延補正: 0 ではなく 2 */
         s_sync_lockout = DEMOD_SPB / 2;   /* 4 サンプル間ロック */
-    }
-
-    /* 9. ビット決定 (位相中点 = phase == 4) */
-    if (s_phase == DEMOD_SPB / 2) {
-        /* NRZI デコード: 前回と同じトーン → 1, 異なる → 0 */
-        uint8_t bit = (s_tone == s_nrzi_ref) ? 1u : 0u;
-        s_nrzi_ref  = s_tone;
-        hdlc_process_bit(bit);
     }
 
     /* 10. 位相カウンタ更新 */
