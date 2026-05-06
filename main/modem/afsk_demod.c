@@ -115,6 +115,7 @@ static bool  s_tone;           /* ヒステリシス付きトーン (true = Mark
 static bool  s_tone_prev;      /* 前サンプルのトーン (遷移検出用) */
 static int   s_sync_lockout;   /* 再同期ロックアウトカウンタ */
 static bool  s_nrzi_ref;       /* NRZI 参照: 最後のビット決定時のトーン */
+static bool  s_squelch_active; /* true=無信号状態 (スケルチ解除検出用) */
 
 /* HDLC デコーダ */
 static hdlc_state_t s_hdlc_state;
@@ -287,8 +288,12 @@ static void afsk_sample_cb(void *arg)
         if (s_hdlc_state != HDLC_HUNT) {
             s_hdlc_state    = HDLC_HUNT;
             s_frame_bit_pos = 0;
-            s_ones          = 0;
         }
+        /* s_ones は HUNT 状態でも常にリセットする。
+         * リセットしないと次の TX 開始時に残留値から始まり、
+         * 最初のフラグが 7 連続 1 = アボートに化けてプリアンブル全体を見逃す */
+        s_ones          = 0;
+        s_squelch_active = true;
         if (++s_phase >= DEMOD_SPB) s_phase = 0;
         if (++s_sample_cnt >= LOG_INTERVAL_SAMP) {
             s_sample_cnt = 0;
@@ -300,6 +305,17 @@ static void afsk_sample_cb(void *arg)
                      (unsigned long)s_stat_fcs_ng);
         }
         return;
+    }
+
+    /* スケルチ解除直後: ビットクロックを安全な位相に初期化
+     * phase = DEMOD_SPB-1 にして最初の判定を 5 サンプル後に遅らせ、
+     * BPF が最初のトーン遷移に応答する時間を確保する */
+    if (s_squelch_active) {
+        s_squelch_active = false;
+        s_phase          = DEMOD_SPB - 1;  /* = 7: 次の判定まで最低 5 サンプル */
+        s_sync_lockout   = 0;
+        s_nrzi_ref       = true;           /* AX.25 NRZI 初期トーン = Mark */
+        s_ones           = 0;
     }
 
     /* 7. トーン判定 (ヒステリシス付き)
@@ -360,12 +376,13 @@ static void afsk_sample_cb(void *arg)
 void afsk_demod_init(void)
 {
     /* 初期値設定 */
-    s_dc           = 2048.0f;
-    s_tone         = true;
-    s_tone_prev    = true;
-    s_nrzi_ref     = true;
-    s_sync_lockout = 0;
-    s_hdlc_state   = HDLC_HUNT;
+    s_dc             = 2048.0f;
+    s_tone           = true;
+    s_tone_prev      = true;
+    s_nrzi_ref       = true;
+    s_sync_lockout   = 0;
+    s_squelch_active = true;
+    s_hdlc_state     = HDLC_HUNT;
     memset(s_frame_buf, 0, sizeof(s_frame_buf));
 
     /* ADC 初期化 (ESP-IDF v5 oneshot API) */
