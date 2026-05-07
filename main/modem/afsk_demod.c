@@ -40,34 +40,38 @@ static const char *TAG = "AFSK_RX";
 
 /* --------------------------------------------------------------------------
  * サンプリング
+ * fs=19200 Hz (16 サンプル/bit) にした理由:
+ *   fs=9600 Hz では 2200 Hz 5 次高調波 (11000 Hz) が 1400 Hz にエイリアスして
+ *   Mark BPF に混入し envM≈envS で判別不能だった。
+ *   fs=19200 Hz では 11000 Hz → 8200 Hz (BPF 帯域外) に移動してゼロになる。
  * -------------------------------------------------------------------------- */
-#define DEMOD_SAMPLE_RATE  9600            /* Hz: 8 サンプル/bit (1200 baud) */
+#define DEMOD_SAMPLE_RATE  19200           /* Hz: 16 サンプル/bit (1200 baud) */
 #define DEMOD_BAUD         1200
-#define DEMOD_SPB          (DEMOD_SAMPLE_RATE / DEMOD_BAUD)  /* 8 */
-#define DEMOD_SAMPLE_US    (1000000 / DEMOD_SAMPLE_RATE)     /* 104 µs */
+#define DEMOD_SPB          (DEMOD_SAMPLE_RATE / DEMOD_BAUD)  /* 16 */
+#define DEMOD_SAMPLE_US    (1000000 / DEMOD_SAMPLE_RATE)     /* 52 µs */
 
 /* --------------------------------------------------------------------------
- * Bell 202 BPF 係数  (2 次 RBJ BPF, Q = 2.5, fs = 9600 Hz)
+ * Bell 202 BPF 係数  (2 次 RBJ BPF, Q = 1.0, fs = 19200 Hz)
  * フィルタ式: y[n] = b0*x[n] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
  * -------------------------------------------------------------------------- */
 
-/* Mark 1200 Hz, Q=1.0, fs=9600 Hz
- *   w0=π/4, sin=cos=0.70711, alpha=sin/(2Q)=0.35355
- *   b0=0.35355/1.35355=0.26120, a1=-1.41421/1.35355=-1.04481, a2=0.64645/1.35355=0.47762
- *   Q=1.0 (Q=2.5 から変更): 群遅延 τ≈2.5 サンプル (旧 τ≈6.4 サンプル)
- *   8 サンプル/bit でビット中点 (4 サンプル) までに 79% 収束 (旧 47%) */
-#define MARK_B0   0.26120f
-#define MARK_B2  (-0.26120f)
-#define MARK_A1  (-1.04481f)
-#define MARK_A2   0.47762f
+/* Mark 1200 Hz, Q=1.0, fs=19200 Hz
+ *   w0=2π×1200/19200=π/8=0.3927, sin=0.3827, cos=0.9239, alpha=0.19134
+ *   b0=0.19134/1.19134=0.16062, a1=-1.8478/1.19134=-1.55106, a2=0.80866/1.19134=0.67876
+ *   群遅延 τ≈5.1 サンプル。ビット中点 (8 サンプル) で 79% 収束 */
+#define MARK_B0   0.16062f
+#define MARK_B2  (-0.16062f)
+#define MARK_A1  (-1.55106f)
+#define MARK_A2   0.67876f
 
-/* Space 2200 Hz, Q=1.0, fs=9600 Hz
- *   w0=1.43990 rad, sin=0.99144, cos=0.13053, alpha=0.49572
- *   b0=0.49572/1.49572=0.33143, a1=-0.26106/1.49572=-0.17454, a2=0.50428/1.49572=0.33714 */
-#define SPACE_B0   0.33143f
-#define SPACE_B2  (-0.33143f)
-#define SPACE_A1  (-0.17454f)
-#define SPACE_A2   0.33714f
+/* Space 2200 Hz, Q=1.0, fs=19200 Hz
+ *   w0=2π×2200/19200=0.71942 rad, sin=0.65934, cos=0.75184, alpha=0.32967
+ *   b0=0.32967/1.32967=0.24793, a1=-1.50368/1.32967=-1.13083, a2=0.67033/1.32967=0.50413
+ *   群遅延 τ≈4.2 サンプル。ビット中点 (8 サンプル) で 85% 収束 */
+#define SPACE_B0   0.24793f
+#define SPACE_B2  (-0.24793f)
+#define SPACE_A1  (-1.13083f)
+#define SPACE_A2   0.50413f
 
 /* エンベロープ LP: α ≈ 0.6 (τ ≈ 1.7 サンプル ≈ 0.17 ms) */
 #define ENV_ALPHA  0.6f
@@ -346,8 +350,11 @@ static void afsk_sample_cb(void *arg)
     if (s_sync_lockout > 0) {
         s_sync_lockout--;
     } else if (transition) {
-        s_phase        = 2;                /* 群遅延補正: 0 ではなく 2 */
-        s_sync_lockout = DEMOD_SPB / 2;   /* 4 サンプル間ロック */
+        /* 群遅延補正: Mark τ≈5.1 samp, Space τ≈4.2 samp (Q=1, fs=19200 Hz)
+         * phase=5 にすることで判定点 (DEMOD_SPB/2=8) が遷移から 3 サンプル後、
+         * ビット境界から 5+3=8 サンプル後 = ビット中点に合う */
+        s_phase        = 5;
+        s_sync_lockout = DEMOD_SPB / 2;   /* 8 サンプル間ロック */
     }
 
     /* 10. 位相カウンタ更新 */
