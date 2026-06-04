@@ -22,12 +22,112 @@
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
 #include "ax25.h"
+#include "ax25_hdlc.h"
 #include "rawpacket.h"
 #include "tnc_buffer.h"
 #include "frame_metadata.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+
+/* ======================================================================
+ * サイン波ソフトウェアループバックテスト
+ *
+ * 有効時: ADC の代わりに内部生成のサイン波をデモジュレータに入力する。
+ *   - BPF → エンベロープ → クロック回復 → HDLC の全経路をクリーン入力で検証
+ *   - 矩形波エイリアスとは無関係にアルゴリズム単体の正しさを確認できる
+ *
+ * 実機 ADC に戻すには下の #define をコメントアウトするだけ。
+ * ====================================================================== */
+#define AFSK_DEMOD_SINE_TEST
+
+#ifdef AFSK_DEMOD_SINE_TEST
+#include <math.h>
+
+static const char s_test_info[] = "NEMO-TNC TEST";
+
+#define TEST_PREAMBLE   20
+#define TEST_HDLC_BUFSZ 128
+static uint8_t s_test_hdlc_buf[TEST_HDLC_BUFSZ];
+static size_t  s_test_hdlc_bits = 0;
+
+static size_t s_test_bit_idx   = 0;
+static int    s_test_bit_phase = 0;   /* 0 .. DEMOD_SPB-1 */
+static bool   s_test_nrzi      = true; /* true = Mark */
+static float  s_test_phase_acc = 0.0f;
+
+/* フレーム送出後に 2 秒間の無音を挟んでスケルチ動作も確認する */
+/* DEMOD_SAMPLE_RATE / DEMOD_SPB はこのブロックより後で定義されるため直接値を使用 */
+#define TEST_FS           9600
+#define TEST_SPB          8       /* TEST_FS / 1200 baud */
+#define TEST_SILENCE_SAMP (TEST_FS * 2)
+static int s_test_silence_cnt = 0;
+
+#define TEST_INC_MARK  (2.0f * (float)M_PI * 1200.0f / TEST_FS)
+#define TEST_INC_SPACE (2.0f * (float)M_PI * 2200.0f / TEST_FS)
+#define TEST_AMPLITUDE 512.0f
+
+static void test_signal_init(void)
+{
+    /* ax25_build_ui_frame は [0x7E][addr+ctrl+pid+info+FCS][0x7E] を返す。
+     * ax25_hdlc_frame は FCS 込みフレーム (フラグなし) を期待するので
+     * ui_buf+1, ui_len-2 で先頭/末尾の 0x7E を除いて渡す。 */
+    ax25_address_t addr = { "APTEST", 0, "JH1FBM", 0 };
+    uint8_t ui_buf[64];
+    size_t ui_len = ax25_build_ui_frame(
+        &addr, (const uint8_t *)s_test_info, sizeof(s_test_info) - 1, ui_buf);
+
+    size_t hdlc_bytes = ax25_hdlc_frame(
+        ui_buf + 1, ui_len - 2, TEST_PREAMBLE,
+        s_test_hdlc_buf, TEST_HDLC_BUFSZ,
+        &s_test_hdlc_bits, NULL);
+
+    ESP_LOGI("AFSK_RX", "SINE TEST: UI %zu bytes -> HDLC %zu bytes / %zu bits",
+             ui_len - 2, hdlc_bytes, s_test_hdlc_bits);
+
+    s_test_bit_idx    = 0;
+    s_test_bit_phase  = 0;
+    s_test_nrzi       = true;
+    s_test_phase_acc  = 0.0f;
+    s_test_silence_cnt = TEST_SILENCE_SAMP;
+}
+
+static int test_signal_next_sample(void)
+{
+    if (s_test_silence_cnt > 0) {
+        s_test_silence_cnt--;
+        return 2048;
+    }
+
+    if (s_test_bit_phase == 0) {
+        if (s_test_bit_idx < s_test_hdlc_bits) {
+            uint8_t bit = (s_test_hdlc_buf[s_test_bit_idx >> 3]
+                           >> (s_test_bit_idx & 7u)) & 1u;
+            if (bit == 0) s_test_nrzi = !s_test_nrzi;
+            s_test_bit_idx++;
+        } else {
+            s_test_bit_idx    = 0;
+            s_test_nrzi       = true;
+            s_test_bit_phase  = 0;
+            s_test_silence_cnt = TEST_SILENCE_SAMP;
+            return 2048;
+        }
+    }
+
+    float inc = s_test_nrzi ? TEST_INC_MARK : TEST_INC_SPACE;
+    s_test_phase_acc += inc;
+    if (s_test_phase_acc >= 2.0f * (float)M_PI) {
+        s_test_phase_acc -= 2.0f * (float)M_PI;
+    }
+
+    if (++s_test_bit_phase >= TEST_SPB) {
+        s_test_bit_phase = 0;
+    }
+
+    return (int)(2048.0f + TEST_AMPLITUDE * sinf(s_test_phase_acc));
+}
+
+#endif /* AFSK_DEMOD_SINE_TEST */
 
 static const char *TAG = "AFSK_RX";
 
@@ -265,9 +365,13 @@ static void hdlc_process_bit(uint8_t bit)
 
 static void afsk_sample_cb(void *arg)
 {
+#ifdef AFSK_DEMOD_SINE_TEST
+    int raw = test_signal_next_sample();
+#else
     /* 1. ADC 読み取り (12-bit: 0..4095, 中点 ≈ 2048) */
     int raw = 2048;
     adc_oneshot_read(s_adc_handle, DEMOD_ADC_CHANNEL, &raw);
+#endif
 
     /* 2. DC 除去 (1 次 IIR LP) */
     s_dc += DC_ALPHA * ((float)raw - s_dc);
@@ -399,6 +503,11 @@ void afsk_demod_init(void)
     s_hdlc_state     = HDLC_HUNT;
     memset(s_frame_buf, 0, sizeof(s_frame_buf));
 
+#ifdef AFSK_DEMOD_SINE_TEST
+    test_signal_init();
+    ESP_LOGI(TAG, "SINE TEST MODE: ADC をスキップし内部サイン波を入力");
+    esp_err_t err = ESP_OK;
+#else
     /* ADC 初期化 (ESP-IDF v5 oneshot API) */
     adc_oneshot_unit_init_cfg_t unit_cfg = {
         .unit_id  = DEMOD_ADC_UNIT,
@@ -421,6 +530,7 @@ void afsk_demod_init(void)
         s_adc_handle = NULL;
         return;
     }
+#endif
 
     /* サンプリング周期タイマー */
     esp_timer_create_args_t targs = {
@@ -431,8 +541,10 @@ void afsk_demod_init(void)
     err = esp_timer_create(&targs, &s_sample_timer);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_timer_create: %s", esp_err_to_name(err));
+#ifndef AFSK_DEMOD_SINE_TEST
         adc_oneshot_del_unit(s_adc_handle);
         s_adc_handle = NULL;
+#endif
         return;
     }
 
@@ -441,12 +553,19 @@ void afsk_demod_init(void)
         ESP_LOGE(TAG, "esp_timer_start_periodic: %s", esp_err_to_name(err));
         esp_timer_delete(s_sample_timer);
         s_sample_timer = NULL;
+#ifndef AFSK_DEMOD_SINE_TEST
         adc_oneshot_del_unit(s_adc_handle);
         s_adc_handle = NULL;
+#endif
         return;
     }
 
+#ifdef AFSK_DEMOD_SINE_TEST
+    ESP_LOGI(TAG, "AFSK demod: SINE TEST  %dHz  %dbaud  %dsamp/bit",
+             DEMOD_SAMPLE_RATE, DEMOD_BAUD, DEMOD_SPB);
+#else
     ESP_LOGI(TAG, "AFSK demod: GPIO%d (ADC1_CH%d)  %dHz  %dbaud  %dsamp/bit",
              AFSK_DEMOD_GPIO, (int)DEMOD_ADC_CHANNEL,
              DEMOD_SAMPLE_RATE, DEMOD_BAUD, DEMOD_SPB);
+#endif
 }
