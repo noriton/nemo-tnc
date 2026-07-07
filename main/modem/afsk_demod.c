@@ -199,6 +199,7 @@ static const char *TAG = "AFSK_RX";
 #define PORT_ID_DEFAULT  0                             /* デフォルト受信ポート */
 
 typedef enum { HDLC_HUNT, HDLC_SYNC, HDLC_FRAME } hdlc_state_t;
+static const char * const s_hdlc_state_str[] = { "HUNT", "SYNC", "FRAME" };
 
 /* --------------------------------------------------------------------------
  * 静的変数 (ゼロ初期化 / afsk_demod_init で明示設定)
@@ -319,6 +320,8 @@ static void hdlc_process_bit(uint8_t bit)
             /* 6 個目の 1: 蓄積せず次ビットを待つ */
         } else {
             /* 7+ 連続 1 → アボート */
+            ESP_LOGW(TAG, "ABORT (7+ ones) hdlc=%s frame_bit_pos=%zu",
+                     s_hdlc_state_str[s_hdlc_state], s_frame_bit_pos);
             s_hdlc_state    = HDLC_HUNT;
             s_frame_bit_pos = 0;
             s_ones          = 0;
@@ -343,6 +346,10 @@ static void hdlc_process_bit(uint8_t bit)
                 /* バイト境界チェック + 最小フレーム長 (16 bytes = FCS含む最小) */
                 if ((valid_bits & 7u) == 0 && valid_bits >= 16u * 8u) {
                     hdlc_frame_done(valid_bits >> 3);
+                } else {
+                    ESP_LOGW(TAG, "FRAME DROP (misaligned/short) "
+                             "frame_bit_pos=%zu valid_bits=%zu (%%8=%zu)",
+                             s_frame_bit_pos, valid_bits, valid_bits & 7u);
                 }
             }
             memset(s_frame_buf, 0, sizeof(s_frame_buf));
@@ -420,8 +427,8 @@ static void afsk_sample_cb(void *arg)
     }
 
     /* スケルチ解除直後: ビットクロックを安全な位相に初期化
-     * phase = DEMOD_SPB-1 にして最初の判定を 5 サンプル後に遅らせ、
-     * BPF が最初のトーン遷移に応答する時間を確保する */
+     * phase = DEMOD_SPB-1 にすると次サンプルで phase==0 となり
+     * (判定タイミングと合わせて) 最初の判定が発生する */
     if (s_squelch_active) {
         s_squelch_active = false;
         s_phase          = DEMOD_SPB - 1;  /* = 7: 次の判定まで最低 5 サンプル */
@@ -439,30 +446,36 @@ static void afsk_sample_cb(void *arg)
         if (diff >  TONE_HYST) s_tone = true;
     }
 
-    /* 8. ビット決定 (ビット末尾 = phase == DEMOD_SPB-1 = 7)
-     *    遷移検出より先に判定する。これにより判定点で遷移が来ても
-     *    現在ビットの判定を確実に行い、位相リセットは次ビット以降に効かせる。
-     *    Q=2.5 群遅延 τ≈6.4 samp → 末尾 (7samp) で収束率 66% (中点 4samp では 47%) */
-    if (s_phase == DEMOD_SPB - 1) {
+    /* 8. ビット決定 (phase == 0: ビット境界の 1 サンプル後)
+     *    遷移検出より先に判定する。
+     *    判定を境界ちょうどではなく 1 サンプル後にすることで、resync が
+     *    ちょうど判定と同じサンプルで発火して位相が二重に進んでしまう
+     *    競合 (旧: phase==DEMOD_SPB-1 での重複判定バグ) を避ける。 */
+    bool decision_this_sample = (s_phase == 0);
+    if (decision_this_sample) {
         /* NRZI デコード: 前回と同じトーン → 1, 異なる → 0 */
         uint8_t bit = (s_tone == s_nrzi_ref) ? 1u : 0u;
         s_nrzi_ref  = s_tone;
         hdlc_process_bit(bit);
+        /* 判定直後は resync を数サンプルロックアウトする (resync 後だけでなく
+         * 通常判定の後も)。BPF のリンギング (本物の遷移直後に起きる 1〜2
+         * サンプルのトーンの跳ね返り) を新たな遷移と誤検出し、余分な
+         * resync とビット判定を引き起こすのを防ぐため。 */
+        s_sync_lockout = DEMOD_SPB / 2;
     }
 
-    /* 9. 遷移検出 → ビットクロック再同期 (判定の後に実行)
-     *    phase==4 のサンプルで遷移しても判定済みなので位相リセットは次ビットへ向かう。
-     *    BPF 群遅延補正: phase=2 にすることで次の判定点 (phase==4) が
-     *    遷移から 4 サンプル後 = ビット中点に合う */
+    /* 9. 遷移検出 → ビットクロック再同期 (判定の後に実行) */
     bool transition = (s_tone != s_tone_prev);
     s_tone_prev = s_tone;
-    if (s_sync_lockout > 0) {
+    if (decision_this_sample) {
+        /* 判定と同じサンプルで遷移が来た場合はクロックは既に同期している
+         * ので resync しない (位相を余分に進めると次サンプルで重複判定になる) */
+    } else if (s_sync_lockout > 0) {
         s_sync_lockout--;
     } else if (transition) {
-        /* 群遅延補正: Q=2.5 の群遅延 τ≈6.4 サンプル
-         * phase=6 にすることで判定点 (DEMOD_SPB-1=7) が遷移の 1 サンプル後、
-         * ビット境界から 6.4+1≈7 サンプル後 = ビット末尾に合う */
-        s_phase        = 6;
+        /* 群遅延補正: 次の判定点 (phase==0) が遷移の 1 サンプル後になるよう
+         * phase = DEMOD_SPB-1 にセットする (この直後の位相カウンタ更新で 0 へ) */
+        s_phase        = DEMOD_SPB - 1;
         s_sync_lockout = DEMOD_SPB / 2;   /* 4 サンプル間ロック */
     }
 
@@ -474,13 +487,12 @@ static void afsk_sample_cb(void *arg)
     /* 11. 定期診断ログ (5 秒ごと) */
     if (++s_sample_cnt >= LOG_INTERVAL_SAMP) {
         s_sample_cnt = 0;
-        static const char * const state_str[] = { "HUNT", "SYNC", "FRAME" };
         ESP_LOGI(TAG,
                  "STAT DC=%.0f envM=%.1f envS=%.1f diff=%.1f tone=%s hdlc=%s "
                  "flags=%lu ok=%lu ng=%lu",
                  s_dc, s_env_m, s_env_s, diff,
                  s_tone ? "MARK" : "SPACE",
-                 state_str[s_hdlc_state],
+                 s_hdlc_state_str[s_hdlc_state],
                  (unsigned long)s_stat_flags,
                  (unsigned long)s_stat_fcs_ok,
                  (unsigned long)s_stat_fcs_ng);
