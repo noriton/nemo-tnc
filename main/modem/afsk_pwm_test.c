@@ -31,6 +31,54 @@ static const char *TAG = "AFSK_TEST";
 // HDLC 出力バッファ（static: スタック節約）
 static uint8_t s_hdlc_buf[AX25_HDLC_OUT_MAX(RAW_PACKET_MAX_LEN_WITH_FCS, 20)];
 
+/* ======================================================================
+ * ベンチテスト用自動送信 (TX→LPF→RX ハードウェアループバック確認用)
+ *
+ * 有効時: 起動 3 秒後から 5 秒間隔でテスト AX.25 UI フレームを afsk_tx_buf
+ * へ自動投入する。KISS/USB 経由の実パケットが来なくても GPIO17 から
+ * PWM が出るようになる。実運用時は下の #define をコメントアウトすること。
+ * ====================================================================== */
+#define AFSK_PWM_SELFTEST
+
+#ifdef AFSK_PWM_SELFTEST
+static const char s_selftest_info[] = "NEMO-TNC TEST";
+
+static void afsk_pwm_selftest_task(void *pvParameters)
+{
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    for (;;) {
+        raw_tx_item_t item;
+        memset(&item.meta, 0, sizeof(item.meta));
+        item.meta.version    = TNC_META_VERSION_1;
+        item.meta.type       = META_TYPE_DATA_UI;
+        item.meta.header_len = sizeof(item.meta);
+        item.meta.port_id    = 0;
+        item.meta.payload_len = (uint16_t)(sizeof(s_selftest_info) - 1);
+        strncpy(item.meta.src_call,  "JH1FBM", sizeof(item.meta.src_call) - 1);
+        strncpy(item.meta.dest_call, "APTEST", sizeof(item.meta.dest_call) - 1);
+
+        size_t raw_len = rawpacket_build_ax25_ui(
+            &item.meta, (const uint8_t *)s_selftest_info,
+            item.data, sizeof(item.data));
+        if (raw_len > 0) {
+            item.meta.payload_len = (uint16_t)raw_len;
+            size_t item_sz = RAW_TX_ITEM_SIZE(raw_len);
+            if (afsk_tx_buf != NULL) {
+                BaseType_t res = xRingbufferSend(afsk_tx_buf, &item, item_sz, pdMS_TO_TICKS(10));
+                if (res != pdTRUE) {
+                    ESP_LOGW(TAG, "selftest: afsk_tx_buf full, frame dropped");
+                }
+            }
+        } else {
+            ESP_LOGW(TAG, "selftest: build_ax25_ui failed");
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+#endif /* AFSK_PWM_SELFTEST */
+
 // ---------------------------------------------------------------------------
 // 送信ステート（esp_timer コールバックと AFSK タスクで共有）
 // timer callback は esp_timer タスクから呼ばれ AFSK タスクは ulTaskNotifyTake
@@ -255,4 +303,9 @@ void afsk_pwm_test_init(void)
 
     xTaskCreatePinnedToCore(afsk_pwm_test_task, "afsk_test",
                             4096, NULL, 5, NULL, 1);
+
+#ifdef AFSK_PWM_SELFTEST
+    xTaskCreatePinnedToCore(afsk_pwm_selftest_task, "afsk_selftest",
+                            4096, NULL, 5, NULL, 1);
+#endif
 }

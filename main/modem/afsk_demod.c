@@ -39,7 +39,7 @@
  *
  * 実機 ADC に戻すには下の #define をコメントアウトするだけ。
  * ====================================================================== */
-#define AFSK_DEMOD_SINE_TEST
+// #define AFSK_DEMOD_SINE_TEST
 
 #ifdef AFSK_DEMOD_SINE_TEST
 #include <math.h>
