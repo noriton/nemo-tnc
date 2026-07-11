@@ -5,6 +5,7 @@ idf_component_register(SRCS
     "hw/tnc_init.c"
     "hw/indicator.c"
     "hw/nvs_if.c"
+    "hw/i2s_device.c"
 
     "port/tnc_buffer.c"
     "port/command_parser.c"
@@ -28,5 +29,5 @@ idf_component_register(SRCS
     "modem/afsk_demod.c"
 
 INCLUDE_DIRS "." "ax25" "port" "packet" "hw" "modem"
-PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console esp_driver_ledc esp_adc
+PRIV_REQUIRES nvs_flash esp_ringbuf freertos tinyusb esp_timer console esp_driver_ledc esp_adc esp_driver_i2s
 )

@@ -23,6 +23,7 @@
 #include "rawpacket.h"
 #include "afsk_pwm_test.h"
 #include "afsk_demod.h"
+#include "i2s_device.h"
 
 void tnc_init(void)
 {
@@ -66,5 +67,9 @@ void tnc_init(void)
 
     afsk_demod_init();
 
+    // --- V4220M + I2S ブリングアップ (Step 3): まずはアナログループバックで疎通確認 ---
+    // LOUT/ROUT -> LIN/RIN をジャンパ線で直結しておくこと
+    i2s_device_init();
+    i2s_device_start_analog_loopback_test();
 }
 

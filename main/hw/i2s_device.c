@@ -1,50 +1,60 @@
+/*
+ * i2s_device.c  ―  V4220M コーデック + I2S ブリングアップ
+ *
+ * ESP32-S3 を I2S マスターとして動作させ、V4220M コーデックへ
+ * MCLK(XTI)/BCLK(SCLK)/WS(LRCK) を供給する。データは 24bit stereo。
+ *
+ * 現時点ではハードウェア疎通確認用のループバックテストのみ実装。
+ * AFSK 変調/復調本体（afsk_pwm_test.c / afsk_demod.c）を I2S 経由に
+ * 置き換える作業は別途行う。
+ */
+#include "i2s_device.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "i2s_device.h"
-#include "freertos/queue.h"
 
+static const char *TAG = "I2S_DEVICE";
 
-#define SAMPLE_RATE  9600
+static i2s_chan_handle_t s_tx_chan = NULL;
+static i2s_chan_handle_t s_rx_chan = NULL;
 
-static const char *TAG = "NEMO_TNC_I2S";
-
-i2s_chan_handle_t tx_chan;
-i2s_chan_handle_t rx_chan;
-
-
-void init_v4200_and_i2s(void)
+void i2s_device_init(void)
 {
-    // 1. V4220Mのハードウェアリセットシーケンス
-    gpio_set_direction(CODEC_RST_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(CODEC_RST_PIN, 0);
+    // 1. V4220M ハードウェアリセットシーケンス (RSTN: active low)
+    gpio_reset_pin(I2S_CODEC_RST_GPIO);
+    gpio_set_direction(I2S_CODEC_RST_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(I2S_CODEC_RST_GPIO, 0);
     vTaskDelay(pdMS_TO_TICKS(10));
-    gpio_set_level(CODEC_RST_PIN, 1);
+    gpio_set_level(I2S_CODEC_RST_GPIO, 1);
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    // 2. I2Sチャンネルの割り当て（Masterモード）
+    // 2. I2S チャンネル確保 (全二重, マスターモード)
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-    esp_err_t err = i2s_new_channel(&chan_cfg, &tx_chan, &rx_chan);
-
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "I2S channels created successfully");
-    } else {
-        ESP_LOGE(TAG, "I2S channel creation failed");
+    esp_err_t err = i2s_new_channel(&chan_cfg, &s_tx_chan, &s_rx_chan);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_new_channel failed: %s", esp_err_to_name(err));
         return;
     }
 
-    // 3. I2S標準フォーマット（24bitステレオ）とピンマッピング
+    // 3. I2S 標準フォーマット (24bit stereo) とピン割り当て
+    //    V4220M 側 DIF1/DIF0 はボード上で 00 (I2S) に固定配線されている前提
+    //
+    //    slot_bit_width は AUTO(=24bit) にせず明示的に 32bit にする。
+    //    ESP32-S3 では slot_bit_width=24 だと DMA バッファが 3byte 詰めに
+    //    なってしまい int32_t 前提のバッファと合わなくなる。32bit にすれば
+    //    BCLK=64Fs (V4220M マスターモード時の規定値と同じ) になり、
+    //    サンプルは各32bitスロットの上位24bitに MSB 詰めされる。
     i2s_std_config_t std_cfg = {
-        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
+        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(I2S_SAMPLE_RATE),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_24BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
-            .mclk = I2S_MCLK_PIN,
-            .bclk = I2S_BCLK_PIN,
-            .ws   = I2S_WS_PIN,
-            .dout = I2S_DOUT_PIN,
-            .din  = I2S_DIN_PIN,
+            .mclk = I2S_CODEC_MCLK_GPIO,
+            .bclk = I2S_CODEC_SCLK_GPIO,
+            .ws   = I2S_CODEC_LRCK_GPIO,
+            .dout = I2S_CODEC_DIN_GPIO,   /* ESP32 dout -> コーデック DIN */
+            .din  = I2S_CODEC_DOUT_GPIO,  /* コーデック DOUT -> ESP32 din */
             .invert_flags = {
                 .mclk_inv = false,
                 .bclk_inv = false,
@@ -53,119 +63,181 @@ void init_v4200_and_i2s(void)
         },
     };
 
-    // 4. APLLを有効化し、V4220M用の正確なMCLK(2.4576MHz)を生成
-    std_cfg.clk_cfg.use_apll = true;
-    std_cfg.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
+    // 4. MCLK 逓倍率: 24bit データ幅では ESP-IDF 推奨の 384×Fs にする
+    //    (256×Fs だとサンプルレートが不正確になる場合がある)。
+    //    384×48000Hz = 18.432MHz は V4220M の XTI 許容値 (256/384/512×Fs) の一つ。
+    std_cfg.clk_cfg.mclk_multiple  = I2S_MCLK_MULTIPLE_384;
+    std_cfg.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT;
 
-    // 5. ドライバの初期化と有効化
-    i2s_channel_init_std_mode(tx_chan, &std_cfg);
-    i2s_channel_init_std_mode(rx_chan, &std_cfg);
-    i2s_channel_enable(tx_chan);
-    i2s_channel_enable(rx_chan);
+    err = i2s_channel_init_std_mode(s_tx_chan, &std_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_channel_init_std_mode(tx) failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = i2s_channel_init_std_mode(s_rx_chan, &std_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_channel_init_std_mode(rx) failed: %s", esp_err_to_name(err));
+        return;
+    }
 
-    ESP_LOGI(TAG, "V4220M initialized and I2S running.");
+    err = i2s_channel_enable(s_tx_chan);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_channel_enable(tx) failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = i2s_channel_enable(s_rx_chan);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "i2s_channel_enable(rx) failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    ESP_LOGI(TAG, "V4220M + I2S initialized (Fs=%dHz, MCLK=%luHz, 24bit stereo)",
+             I2S_SAMPLE_RATE, (unsigned long)I2S_SAMPLE_RATE * 384);
 }
 
-void tnc_processing_task(void *pvParameters)
+/* ---------------------------------------------------------------------
+ * アナログ側ループバックテスト
+ *
+ * 外部入力回路がまだ無いため、V4220M の DAC 出力 (LOUT/ROUT) から
+ * ADC 入力 (LIN/RIN) へジャンパ線で直結し、実際にアナログを経由させて
+ * 動作確認する。どちらのチャンネルをジャンパしたか分からなくても済む
+ * ように、TX は左右両チャンネルに同じ信号を出力し、RX は左右を
+ * 独立に解析する。
+ *
+ * 送信信号: Mark(1200Hz)/Space(2200Hz) を2秒おきに切り替えるサイン波。
+ * 受信側はゼロクロス数からおおよその周波数を推定し、ピーク振幅と
+ * あわせて1秒ごとにログ出力する。ジャンパした側のチャンネルだけ
+ * peak が大きく freq が送信周波数に近い値になれば、DAC->ADC の
+ * アナログパスが正常に動作していることが確認できる。
+ * ------------------------------------------------------------------- */
+#include <math.h>
+#include <stdbool.h>
+
+#define LOOPBACK_TONE_MARK_HZ    1200.0f
+#define LOOPBACK_TONE_SPACE_HZ   2200.0f
+#define LOOPBACK_TONE_SWITCH_SEC 2
+#define LOOPBACK_TONE_AMPLITUDE  2000000   /* 24bit full scale (+-8388607) に対し余裕を持たせる */
+
+typedef struct {
+    float phase_acc;
+    bool  is_mark;
+    int   samples_left;
+} tone_gen_t;
+
+static void tone_gen_reset(tone_gen_t *g)
 {
-    I2sSample rx_data;
-    I2sSample tx_data;
-    size_t bytes_read = 0;
-    size_t bytes_written = 0;
+    g->phase_acc    = 0.0f;
+    g->is_mark      = true;
+    g->samples_left = I2S_SAMPLE_RATE * LOOPBACK_TONE_SWITCH_SEC;
+}
 
-    init_v4200_and_i2s();
+/* 24bit 符号付きサンプルを生成し、32bit スロットの上位24bitへ配置して返す */
+static int32_t tone_gen_next_sample(tone_gen_t *g)
+{
+    float freq = g->is_mark ? LOOPBACK_TONE_MARK_HZ : LOOPBACK_TONE_SPACE_HZ;
+    float inc  = 2.0f * (float)M_PI * freq / I2S_SAMPLE_RATE;
+    g->phase_acc += inc;
+    if (g->phase_acc >= 2.0f * (float)M_PI) {
+        g->phase_acc -= 2.0f * (float)M_PI;
+    }
 
-    // DSP処理ループ
+    if (--g->samples_left <= 0) {
+        g->is_mark      = !g->is_mark;
+        g->samples_left = I2S_SAMPLE_RATE * LOOPBACK_TONE_SWITCH_SEC;
+    }
+
+    int32_t sample24 = (int32_t)(sinf(g->phase_acc) * LOOPBACK_TONE_AMPLITUDE);
+    return sample24 << 8;
+}
+
+typedef struct {
+    int32_t peak;
+    int     zero_crossings;
+    bool    prev_positive;
+    bool    have_prev;
+} chan_stats_t;
+
+static void chan_stats_reset(chan_stats_t *s)
+{
+    s->peak           = 0;
+    s->zero_crossings = 0;
+    s->have_prev      = false;
+}
+
+static void chan_stats_update(chan_stats_t *s, int32_t sample24)
+{
+    int32_t a = (sample24 < 0) ? -sample24 : sample24;
+    if (a > s->peak) s->peak = a;
+
+    bool positive = (sample24 >= 0);
+    if (s->have_prev && positive != s->prev_positive) {
+        s->zero_crossings++;
+    }
+    s->prev_positive = positive;
+    s->have_prev     = true;
+}
+
+static void i2s_analog_loopback_task(void *pvParameters)
+{
+    tone_gen_t tx_gen;
+    tone_gen_reset(&tx_gen);
+
+    chan_stats_t left_stats, right_stats;
+    chan_stats_reset(&left_stats);
+    chan_stats_reset(&right_stats);
+
+    int log_countdown = I2S_SAMPLE_RATE;   /* 1秒ごとにログ */
+
     for (;;) {
-        esp_err_t res = i2s_channel_read(rx_chan, &rx_data, sizeof(I2sSample), &bytes_read, portMAX_DELAY);
-        
-        if (res == ESP_OK) {
-            // ここにAFSKのゼロクロス判定や、送信時のサイン波生成（DSP処理）を実装します
-            // テスト用：受信した音をそのまま送信側へループバック
-            tx_data.left = rx_data.left;
-            tx_data.right = rx_data.right;
-        } else if (res == ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "I2S Read Timeout");
-        } else {
-            ESP_LOGE(TAG, "I2S Read Error");
+        i2s_sample_t tx_sample;
+        int32_t v = tone_gen_next_sample(&tx_gen);
+        tx_sample.left  = v;
+        tx_sample.right = v;
+
+        size_t bytes_written = 0;
+        i2s_channel_write(s_tx_chan, &tx_sample, sizeof(tx_sample),
+                           &bytes_written, portMAX_DELAY);
+
+        i2s_sample_t rx_sample;
+        size_t bytes_read = 0;
+        esp_err_t res = i2s_channel_read(s_rx_chan, &rx_sample, sizeof(rx_sample),
+                                          &bytes_read, portMAX_DELAY);
+        if (res != ESP_OK) {
+            if (res != ESP_ERR_TIMEOUT) {
+                ESP_LOGE(TAG, "I2S read error: %s", esp_err_to_name(res));
+            }
+            continue;
         }
 
-        // 処理したデータをV4220MのDACへ書き込む
-        i2s_channel_write(tx_chan, &tx_data, sizeof(I2sSample), &bytes_written, portMAX_DELAY);
+        /* 32bit スロットの上位24bitに詰めたサンプルを符号付き24bit値へ戻す */
+        int32_t rx_left  = rx_sample.left  >> 8;
+        int32_t rx_right = rx_sample.right >> 8;
+        chan_stats_update(&left_stats, rx_left);
+        chan_stats_update(&right_stats, rx_right);
+
+        if (--log_countdown <= 0) {
+            log_countdown = I2S_SAMPLE_RATE;
+            /* ゼロクロス数の半分 = 周期数 ≒ 周波数(1秒間分) */
+            float left_hz  = left_stats.zero_crossings  / 2.0f;
+            float right_hz = right_stats.zero_crossings / 2.0f;
+            ESP_LOGI(TAG, "LOOPBACK tx=%s(%.0fHz)  L: peak=%ld freq~=%.0fHz  R: peak=%ld freq~=%.0fHz",
+                     tx_gen.is_mark ? "MARK" : "SPACE",
+                     tx_gen.is_mark ? LOOPBACK_TONE_MARK_HZ : LOOPBACK_TONE_SPACE_HZ,
+                     (long)left_stats.peak, left_hz,
+                     (long)right_stats.peak, right_hz);
+            chan_stats_reset(&left_stats);
+            chan_stats_reset(&right_stats);
+        }
     }
 }
 
-
-static const char *TAG = "NEMO_TNC_TASKS";
-
-typedef struct I2sSample {
-    int32_t left;
-    int32_t right;
-} I2sSample;
-
-// ポートごとのデータ受け渡し用キュー
-QueueHandle_t queue_rx_port0;
-QueueHandle_t queue_rx_port1;
-
-// I2Sドライバからデータを受け取り、各ポートへ分配するタスク
-void task_i2s_interface(void *pvParameters)
+void i2s_device_start_analog_loopback_test(void)
 {
-    I2sSample rx_data;
-    size_t bytes_read;
-
-    for (;;) {
-        esp_err_t res = i2s_channel_read(rx_chan, &rx_data, sizeof(I2sSample), &bytes_read, portMAX_DELAY);
-        
-        if (res == ESP_OK) {
-            // Lch(Port0)とRch(Port1)のデータを分離して、それぞれのDSPキューへ送信（ブロック時間0）
-            xQueueSend(queue_rx_port0, &rx_data.left, 0);
-            xQueueSend(queue_rx_port1, &rx_data.right, 0);
-        } else if (res == ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "I2S Read Timeout");
-        } else {
-            ESP_LOGE(TAG, "I2S Read Error");
-        }
+    if (s_tx_chan == NULL || s_rx_chan == NULL) {
+        ESP_LOGE(TAG, "i2s_device_start_analog_loopback_test: not initialized");
+        return;
     }
-}
-
-// Port 0 (Lch) のモデム処理タスク
-void task_modem_port0(void *pvParameters)
-{
-    int32_t sample_data;
-
-    for (;;) {
-        // I2Sタスクからデータが送られてくるのを待つ
-        if (xQueueReceive(queue_rx_port0, &sample_data, portMAX_DELAY) == pdTRUE) {
-            // ここにPort 0のAFSKデコード処理（DSP）を実装
-        }
-    }
-}
-
-// Port 1 (Rch) のモデム処理タスク
-void task_modem_port1(void *pvParameters)
-{
-    int32_t sample_data;
-
-    for (;;) {
-        // I2Sタスクからデータが送られてくるのを待つ
-        if (xQueueReceive(queue_rx_port1, &sample_data, portMAX_DELAY) == pdTRUE) {
-            // ここにPort 1のAFSKデコード処理（DSP）を実装
-        }
-    }
-}
-
-// メイン関数での起動例
-void app_main(void)
-{
-    // キューの作成（バッファサイズはサンプリングレート等に応じて調整）
-    queue_rx_port0 = xQueueCreate(256, sizeof(int32_t));
-    queue_rx_port1 = xQueueCreate(256, sizeof(int32_t));
-
-    // I2Sの初期化（前回の設定関数を呼ぶ）
-    init_v4220_and_i2s();
-
-    // タスクの起動（xTaskCreatePinnedToCore を使ってコアを割り当て）
-    xTaskCreatePinnedToCore(task_i2s_interface, "I2S_Task", 4096, NULL, 5, NULL, tskNO_AFFINITY);
-    xTaskCreatePinnedToCore(task_modem_port0, "Modem0_Task", 8192, NULL, 4, NULL, 0); // Core 0に固定
-    xTaskCreatePinnedToCore(task_modem_port1, "Modem1_Task", 8192, NULL, 4, NULL, 1); // Core 1に固定
+    xTaskCreatePinnedToCore(i2s_analog_loopback_task, "i2s_analog_lb", 4096, NULL, 5, NULL, 1);
+    ESP_LOGI(TAG, "I2S analog loopback test task started "
+             "(jumper LOUT/ROUT -> LIN/RIN on the V4220M board)");
 }
