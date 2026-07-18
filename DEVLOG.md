@@ -240,3 +240,22 @@ Web検索とPDF抽出（`akizukidenshi.com/goodsaffix/v4220m.pdf` 等）で以�
 1. 実機でアナログループバックテストの結果を確認
 2. 問題なければ、`afsk_demod.c` の AFSK 復調ロジックを ADC oneshot から I2S DMA 経由に置き換え、48kHz 用に BPF係数・DEMOD_SPB・ビットタイミングを再設計する
 3. `afsk_pwm_test.c`（LEDC PWM矩形波送信）も I2S 経由のサイン波送信に置き換える
+
+### 使用ボード / 物理ピン位置の確認
+
+ボードは **ESP32-S3-DevKitC-1-N8R8**（v1.1）。GPIO47/42/41/40/39/48 は全て **J3ヘッダー**上にあり、Espressif公式ユーザーガイドで物理位置を確認した。
+
+| J3ピン番号 | GPIO | 用途 |
+|---|---|---|
+| 6 | GPIO42 | XTI |
+| 7 | GPIO41 | LRCK |
+| 8 | GPIO40 | SCLK |
+| 9 | GPIO39 | DOUT |
+| 16 | GPIO48 | DIN |
+| 17 | GPIO47 | RSTN |
+
+GPIO42/41/40/39 は連番（6〜9番ピン）、GPIO47はそこから7つ離れた17番ピン、GPIO48は16番ピン。
+
+**DIN ピンの変更**: 当初 GPIO38 を予定していたが、ESP32-S3-DevKitC-1 **v1.1 ではGPIO38がオンボードRGB LED (WS2812) と共用**であることが判明（v1.0ではGPIO48がLED用だったが、v1.1でGPIO38に変更されたという公式ドキュメントの記載を確認）。信号品質への影響を避けるため、DINをv1.1ボードで空きピンとなっているGPIO48に変更した（J3ヘッダー16番ピン）。GPIO48はOctal PSRAM用の差動クロック副機能を持つが、v1.0でLED駆動という一般GPIO用途に使われていた実績があり、通常のGPIOとして問題なく使用できる。
+
+なお GPIO35〜37 (J3ヘッダー11〜13番ピン) は N8R8 (Octal PSRAM) 構成では内部フラッシュ/PSRAM用に予約されており外部使用不可。

@@ -12,20 +12,25 @@
  *   IO41 -> LRCK  (ワードセレクト,  ESP32 -> コーデック)
  *   IO40 -> SCLK  (ビットクロック, ESP32 -> コーデック)
  *   IO39 -> DOUT  (コーデックのシリアルデータ出力 -> ESP32 I2S din, RX方向)
- *   IO38 -> DIN   (コーデックのシリアルデータ入力 <- ESP32 I2S dout, TX方向)
+ *   IO48 -> DIN   (コーデックのシリアルデータ入力 <- ESP32 I2S dout, TX方向)
  *
  * 注意: V4220M データシートより、DOUT ピンに 47kΩ プルダウン抵抗が
  * 実装されていると V4220M 自身が I2S マスターモードで起動してしまい、
  * SCLK/LRCK を V4220M 側が出力しようとして ESP32 側と衝突する。
  * このボードでは ESP32 がマスターである前提のため、DOUT に
  * 47kΩ プルダウンが実装されていないことを確認すること。
+ *
+ * DIN は当初 IO38 を想定していたが、ESP32-S3-DevKitC-1 v1.1 では
+ * GPIO38 がオンボード RGB LED と共用のため IO48 に変更した。
+ * GPIO48 は v1.0 でオンボード LED に使われていたが v1.1 では
+ * GPIO38 に移動しており、v1.1 ボードでは空きピンとして使える。
  */
 #define I2S_CODEC_RST_GPIO   47
 #define I2S_CODEC_MCLK_GPIO  42
 #define I2S_CODEC_LRCK_GPIO  41
 #define I2S_CODEC_SCLK_GPIO  40
 #define I2S_CODEC_DOUT_GPIO  39   /* コーデック DOUT -> ESP32 din */
-#define I2S_CODEC_DIN_GPIO   38   /* コーデック DIN  <- ESP32 dout */
+#define I2S_CODEC_DIN_GPIO   48   /* コーデック DIN  <- ESP32 dout */
 
 /* V4220M の DIF1/DIF0 ピンがボード上で 00 (I2S, up to 24bit) に
  * 固定配線されていることが前提。標準 I2S フォーマットで動作する。
