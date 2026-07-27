@@ -140,6 +140,38 @@ void indicator_init(void)
 }
 
 
+// ESP32-S3-DevKitC-1 v1.1 のオンボードRGB LED (GPIO38) を一度だけ消灯する。
+// GPIO39(I2S DOUT)等の隣接ピンのノイズを拾って意図せず点灯することがあるための対策。
+// GPIO4の外部LED(led_strip)とは別インスタンスなので現状の動作には影響しない。
+#define ONBOARD_LED_GPIO 38
+
+void indicator_turn_off_onboard_led(void)
+{
+    led_strip_handle_t onboard_led;
+
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = ONBOARD_LED_GPIO,
+        .max_leds = 1,
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
+        .led_model = LED_MODEL_WS2812,
+        .flags.invert_out = false,
+    };
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 5 * 1000 * 1000,
+        .flags.with_dma = false,
+    };
+
+    if (led_strip_new_rmt_device(&strip_config, &rmt_config, &onboard_led) != ESP_OK) {
+        ESP_LOGW("LED", "onboard LED (GPIO%d) init failed, skip turning it off", ONBOARD_LED_GPIO);
+        return;
+    }
+
+    led_strip_clear(onboard_led);
+    led_strip_del(onboard_led);   // 常時制御する対象ではないので後始末する
+    ESP_LOGI("LED", "onboard LED (GPIO%d) turned off", ONBOARD_LED_GPIO);
+}
+
 static void indicator_set_color(uint8_t r, uint8_t g, uint8_t b)
 {
     if (led_strip) {

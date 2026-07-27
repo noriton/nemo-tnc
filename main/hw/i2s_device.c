@@ -177,6 +177,11 @@ static void chan_stats_update(chan_stats_t *s, int32_t sample24)
     s->have_prev     = true;
 }
 
+/* ESP-IDFの標準的な使い方に合わせ、1フレームずつではなくまとまった
+ * バッファ単位で read/write する（小さすぎる単位での転送はフレーム
+ * 境界がずれる要因になり得るため）。 */
+#define LOOPBACK_BUF_FRAMES 256
+
 static void i2s_analog_loopback_task(void *pvParameters)
 {
     tone_gen_t tx_gen;
@@ -186,21 +191,24 @@ static void i2s_analog_loopback_task(void *pvParameters)
     chan_stats_reset(&left_stats);
     chan_stats_reset(&right_stats);
 
+    static i2s_sample_t tx_buf[LOOPBACK_BUF_FRAMES];
+    static i2s_sample_t rx_buf[LOOPBACK_BUF_FRAMES];
+
     int log_countdown = I2S_SAMPLE_RATE;   /* 1秒ごとにログ */
 
     for (;;) {
-        i2s_sample_t tx_sample;
-        int32_t v = tone_gen_next_sample(&tx_gen);
-        tx_sample.left  = v;
-        tx_sample.right = v;
+        for (int i = 0; i < LOOPBACK_BUF_FRAMES; i++) {
+            int32_t v = tone_gen_next_sample(&tx_gen);
+            tx_buf[i].left  = v;
+            tx_buf[i].right = v;
+        }
 
         size_t bytes_written = 0;
-        i2s_channel_write(s_tx_chan, &tx_sample, sizeof(tx_sample),
+        i2s_channel_write(s_tx_chan, tx_buf, sizeof(tx_buf),
                            &bytes_written, portMAX_DELAY);
 
-        i2s_sample_t rx_sample;
         size_t bytes_read = 0;
-        esp_err_t res = i2s_channel_read(s_rx_chan, &rx_sample, sizeof(rx_sample),
+        esp_err_t res = i2s_channel_read(s_rx_chan, rx_buf, sizeof(rx_buf),
                                           &bytes_read, portMAX_DELAY);
         if (res != ESP_OK) {
             if (res != ESP_ERR_TIMEOUT) {
@@ -209,14 +217,18 @@ static void i2s_analog_loopback_task(void *pvParameters)
             continue;
         }
 
-        /* 32bit スロットの上位24bitに詰めたサンプルを符号付き24bit値へ戻す */
-        int32_t rx_left  = rx_sample.left  >> 8;
-        int32_t rx_right = rx_sample.right >> 8;
-        chan_stats_update(&left_stats, rx_left);
-        chan_stats_update(&right_stats, rx_right);
+        size_t frames_read = bytes_read / sizeof(i2s_sample_t);
+        for (size_t i = 0; i < frames_read; i++) {
+            /* 32bit スロットの上位24bitに詰めたサンプルを符号付き24bit値へ戻す */
+            int32_t rx_left  = rx_buf[i].left  >> 8;
+            int32_t rx_right = rx_buf[i].right >> 8;
+            chan_stats_update(&left_stats, rx_left);
+            chan_stats_update(&right_stats, rx_right);
+        }
 
-        if (--log_countdown <= 0) {
-            log_countdown = I2S_SAMPLE_RATE;
+        log_countdown -= (int)frames_read;
+        if (log_countdown <= 0) {
+            log_countdown += I2S_SAMPLE_RATE;
             /* ゼロクロス数の半分 = 周期数 ≒ 周波数(1秒間分) */
             float left_hz  = left_stats.zero_crossings  / 2.0f;
             float right_hz = right_stats.zero_crossings / 2.0f;

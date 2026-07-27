@@ -16,6 +16,10 @@ typedef enum tnc_state {
 // 初期化
 void indicator_init(void);
 
+// GPIO38 のオンボードRGB LED (ESP32-S3-DevKitC-1 v1.1) を一度だけ消灯する
+// (I2S配線のノイズ等で意図せず点灯することがあるための対策。GPIO4の外部LEDとは無関係)
+void indicator_turn_off_onboard_led(void);
+
 // 状態設定関数
 void indicator_set_state(tnc_state_t new_state); // 他のファイルからこれを呼ぶ
 
